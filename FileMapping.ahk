@@ -395,7 +395,7 @@ class FileMapping {
      * If your application needs to know exactly how many bytes will be consumed prior to opening
      * the view, call the method with `true` as the last parameter. This will perform all the
      * calculations but skip opening the view.
-     * <br>
+     *
      * Explanation of granularity:
      * @example
      *  f := FileMapping('MyContent.json')
