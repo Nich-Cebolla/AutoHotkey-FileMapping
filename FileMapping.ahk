@@ -1,7 +1,10 @@
 ﻿/**
 
     Current status of class: development
-    v0.0.1
+    v0.0.2
+
+    New in v0.0.2 - 2025-05-21
+
 
     Abbreviations
     BMP - Basic Multilingual Plane
@@ -19,6 +22,7 @@
                     interprocess communication
         OpenViewB - This has been debugged. Next step is to test its usage with `ReadPos`
         Read - Has no current issues but work needs to be done to support all utf-16 and utf-8 characters.
+        Write - Tested and working.
 
     Basic methods (simple functions that don't require special validation):
         __New
@@ -63,7 +67,6 @@
     5: Ensure the class correctly handles characters outside of the BMP.
 
     Things I don't plan to work on:
-    - Writing to file
     - Other encodings
 
 */
@@ -100,7 +103,7 @@
  *
  * - To use a file mapping object for inter-process communication, follow these guidelines:
  *   - Leave `Path` unset.
- *   - Set the `Name` parameter with "Global\" prefix, e.g. "Global\SomeName".
+ *   - Set the `Name` parameter with "Local\" prefix, e.g. "Local\SomeName".
  *   - Set encoding "utf-16".
  *   - All parameters prefixed with `file_` are irrelevant so you can ignore them.
  *   - Set `map_flProtect` to 0x04.
@@ -116,14 +119,6 @@
  * probably copying more of it into AHK object properties. This class provides a convenient
  * implementation for handling very large files using AHK code without reading the whole file into memory.
  * {@link https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw}
- * - Regarding files, this should only be used for reading from a file; this doesn't support writing
- * to file at this time, though you can implement it yourself by modifying the bytes then calling
- * `FlushViewOfFile`. If working strictly in utf-16 (i.e. working only with AHK code), you can use
- * `StrGet` and `StrPut`, then call `FlushViewOfFile` to write the changes back to the file.
- * {@link https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-flushviewoffile}
- * If working with other encodings, you can also use `StrGet` and `StrPut` or `NumGet` and `NumPut`
- * but you must be aware of how the encoding influences what byte offsets are valid to read / write
- * from.
  */
 class FileMapping {
     static __New() {
@@ -340,6 +335,7 @@ class FileMapping {
      */
     OpenFile() {
         if this.hFile == -1 {
+            this.Size := this.map_dwMaxSizeLow
             return
         }
         if this.hFile {
@@ -376,8 +372,8 @@ class FileMapping {
             , 'ptr', this.hFile
             , 'ptr', this.map_lpFileMappingAttributes
             , 'ptr', this.map_flProtect
-            , 'uint', this.map_dwMaxSizeHigh
-            , 'uint', this.map_dwMaxSizeLow
+            , 'int', this.map_dwMaxSizeHigh
+            , 'int', this.map_dwMaxSizeLow
             , 'ptr', this.Name ? StrPtr(this.Name) : 0
             , 'ptr'
         )) {
@@ -615,6 +611,20 @@ class FileMapping {
         this.Pos += Length
         return StrGet(this.ptr + Pos, Length, this.Encoding)
     }
+
+	Write(Data, Offset := 0, Encoding?) {
+		if (this.ptr) {
+            if Data is String {
+			    return StrPut(Data, this.ptr + Offset, (this.CurrentViewSize - Offset) / 2, Encoding ?? this.Encoding)
+            } else if Data is Buffer {
+                DllCall('RtlCopyMemory', 'ptr', this.ptr + Offset, 'ptr', Data, 'int', Min(Data.Size, this.CurrentViewSize - Offset))
+            } else {
+                throw TypeError('The Data type must be a string or a Buffer object')
+            }
+        } else {
+            throw Error('File is closed.')
+        }
+	}
 
     __Delete() {
         this.Close()
