@@ -128,6 +128,7 @@ class FileMapping {
             DllCall('GetSystemInfo', 'ptr', sysInfo)
             this.VirtualMemoryGranularity := NumGet(sysInfo, 24 + A_ptrSize * 2, 'uint')
             this.LargePageMinimum := DllCall('GetLargePageMinimum', 'uint')
+            this.Prototype.DefineProp('Size', { Value: 0 })
         }
     }
 
@@ -698,6 +699,8 @@ class FileMapping {
     OnLastPage => this.Page == this.Pages
 
     Pages => this.Size ? Ceil(this.Size / FileMapping.VirtualMemoryGranularity) : 0
+
+    VirtualMemoryGranularity => FileMapping.VirtualMemoryGranularity
 
     Pos {
         Get => this.__Pos
