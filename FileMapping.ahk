@@ -144,7 +144,7 @@ class FileMapping {
      * mapping object, a handle to the existing file mapping object will be
      * requested, instead of creating a new one. If the name exists but is some other type of object,
      * the function fails. For IPC. the name should include "Global\" or "Local\", e.g.
-     * `Global\MyFileMapping` or `\Local\MyFileMapping`. See Descolada's post for more information
+     * `Global\MyFileMapping` or `Local\MyFileMapping`. See Descolada's post for more information
      * {@link https://www.autohotkey.com/boards/viewtopic.php?f=96&t=124720}.
      * @param {String} [Encoding] - The file's encoding. This is used by the `Read` method. If unset,
      * AHK's built-in encoding handling is used, which currently uses the system's default ANSI code
