@@ -1590,7 +1590,8 @@ class FileMapping {
      * @description - Writes a string to the current position of the file mapping object, and advances
      * the file pointer.
      *
-     * This never writes a null terminator.
+     * This never writes a null terminator. Call {@link FileMapping.Prototype.Terminate} to add a
+     * null terminator.
      *
      * If the current view is insufficient to receive the entire string, and if the size of the file
      * mapping object is sufficient to receive the entire string, {@link FileMapping.Prototype.Write}
@@ -1639,7 +1640,8 @@ class FileMapping {
      * This method is the same as {@link FileMapping.Prototype.Write} except parameter `Str` is a
      * `VarRef`.
      *
-     * This never writes a null terminator.
+     * This never writes a null terminator. Call {@link FileMapping.Prototype.Terminate} to add a
+     * null terminator.
      *
      * If the current view is insufficient to receive the entire string, and if the size of the file
      * mapping object is sufficient to receive the entire string, {@link FileMapping.Prototype.Write}

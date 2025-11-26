@@ -68,6 +68,7 @@ fm := FileMapping({ Path: "MyFile.Txt", Encoding: "UTF-16" })
 fm.Open()
 OutputDebug(fm.Read() "`n")
 fm.Write("`nAnother line.")
+fm.Terminate() ; add a null terminator
 fm.Pos := 2
 OutputDebug(fm.Read() "`n")
 fm.Close()
@@ -100,6 +101,7 @@ xcopy C:\users\you\path\to\AutoHotkey-FileMapping\src\FileMapping.ahk C:\users\y
     fm := FileMapping()
     fm.Open()
     fm.Write("Hello, world!")
+    fm.Terminate() ; add a null terminator
     ```
   - Create a file mapping object backed by a file:
     ```ahk
