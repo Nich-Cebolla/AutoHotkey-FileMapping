@@ -167,16 +167,12 @@ class FileMapping {
      * `FileMapping_VirtualMemoryGranularity` (1 page).
      *
      * @param {String} [Options.Name] - The name of the file mapping object. Set `Options.Name` when
-     * using {@link FileMapping} for inter-process communication. If this is set, `Options.Path`
-     * is ignored.
+     * using {@link FileMapping} for inter-process communication.
      *
      * When creating a file mapping object, the name must be unique across the system. If the name is
      * already in use, and the current name is associated with an existing file mapping object,
      * `CreateFileMapping` requests a handle to the existing file mapping object instead of creating
      * a new object. If the name exists but is some other type of object, the function fails.
-     *
-     * For inter-process communication, the name should include "Global\" or "Local\", e.g.
-     * `Global\MyFileMapping` or  `Local\MyFileMapping`.
      *
      * To direct {@link FileMapping.Prototype.__New} to generate a random name, set `Options.Name`
      * with any string that ends with a backslash optionally followed by a number representing the
