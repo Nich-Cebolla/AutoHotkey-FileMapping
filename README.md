@@ -86,7 +86,7 @@ git clone https://github.com/Nich-Cebolla/AutoHotkey-FileMapping
 
 2. Copy FileMapping.ahk to your [lib](https://www.autohotkey.com/docs/v2/Scripts.htm#lib) folder.
 ```cmd
-xcopy C:\users\you\path\to\AutoHotkey-FileMapping\src\FileMapping.ahk C:\users\you\documents\AutoHotkey\lib\FileMapping.ahk
+xcopy C:\users\you\path\to\AutoHotkey-FileMapping\src\FileMapping.ahk %USERPROFILE%\documents\AutoHotkey\lib\FileMapping.ahk
 ```
 
 3. Include the library in your script.
