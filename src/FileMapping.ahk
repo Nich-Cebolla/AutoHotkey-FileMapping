@@ -990,6 +990,9 @@ class FileMapping {
      * If the size of the file mapping object is insufficient to receive the entire data, the behavior
      * of {@link FileMapping.Prototype.RawWrite} is determined by parameter `AdjustMaxSize`.
      *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
      * @param {*} Data - A pointer to the source of the data, or a Buffer containing the data, or an
      * object with properties "Ptr" and "Size".
      *
@@ -1601,6 +1604,9 @@ class FileMapping {
      * If the size of the file mapping object is insufficient to receive the entire string, the behavior
      * of {@link FileMapping.Prototype.Write} is determined by parameter `AdjustMaxSize`.
      *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
      * @param {String} String - The string to write.
      *
      * @param {Boolean} [AdjustMaxSize = false] - Understand that if the file mapping object is opened
@@ -1650,6 +1656,9 @@ class FileMapping {
      *
      * If the size of the file mapping object is insufficient to receive the entire string, the behavior
      * of {@link FileMapping.Prototype.Write} is determined by parameter `AdjustMaxSize`.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
      *
      * @param {VarRef} Str - A variable containing the string to write.
      *
