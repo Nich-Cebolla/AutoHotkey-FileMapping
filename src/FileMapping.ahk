@@ -174,20 +174,23 @@ class FileMapping {
      * `CreateFileMapping` requests a handle to the existing file mapping object instead of creating
      * a new object. If the name exists but is some other type of object, the function fails.
      *
+     * Note: If you are reading this from the source file, the backslashes below are escaped so the
+     * markdown renderer displays them correctly. Treat each backslash pair as a single backslash.
+     *
      * To direct {@link FileMapping.Prototype.__New} to generate a random name, set `Options.Name`
      * with any string that ends with a backslash optionally followed by a number representing the
      * number of characters to include in the name. Your code can begin the string with any valid
      * string to use as a prefix, and the random characters will be appended to the prefix. For
      * example, each of the following are valid for producing a random name:
-     * - "\" - generates a random name of 16 characters.
-     * - "\20" - generates a random name of 20 characters.
-     * - "Global\\22" - generates a random name of 22 characters and appends it to "Global\".
-     * - "Local\\" - generates a random name of 16 characters and appends it to "Local\".
-     * - "Local\MyAppName_\" - generates a random name of 16 characters and appends it to
-     *   "Local\MyAppName_".
-     * - "MyAppName\14" - generates a random name of 14 characters and appends it to "MyAppName".
-     * - "Global\Ajmz(eOO\10" - generates a random name of 10 characters and appends it to
-     *   "Global\Ajmz(eOO".
+     * - "\\" - generates a random name of 16 characters.
+     * - "\\20" - generates a random name of 20 characters.
+     * - "Global\\\\22" - generates a random name of 22 characters and appends it to "Global\\".
+     * - "Local\\\\" - generates a random name of 16 characters and appends it to "Local\\".
+     * - "Local\\MyAppName_\\" - generates a random name of 16 characters and appends it to
+     *   "Local\\MyAppName_".
+     * - "MyAppName\\14" - generates a random name of 14 characters and appends it to "MyAppName".
+     * - "Global\\Ajmz(eOO\\10" - generates a random name of 10 characters and appends it to
+     *   "Global\\Ajmz(eOO".
      *
      * The random characters fall between code points 33 - 91, inclusive. If your application requires
      * a different set of characters to be used, leave `Options.Name` unset and call
