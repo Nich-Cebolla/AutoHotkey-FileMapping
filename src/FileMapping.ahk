@@ -1226,7 +1226,6 @@ class FileMapping {
      * @returns {Integer} - The return value from {@link FileMapping.Prototype.OpenViewP}.
      *
      * @throws {ValueError} - "`Page` is equivalent to or exceeds the maximum size of the file mapping object."
-     * @throws {ValueError} - "`Pages` will cause the view to exceed the maximum size of the file mapping object."
      */
     Reload(NewSize?, Page?, Pages?) {
         originalOffset := this.__Pos
