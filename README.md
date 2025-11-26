@@ -200,6 +200,21 @@ for page, offset, bytes, isLastIteration in fm {
 }
 ```
 
+You can also use a regular loop and call `FileMapping.Prototype.NextPage`, which will return 0 when
+the last page has already been reached.
+```ahk
+fm := FileMapping({ Path: "MyLargeData.csv", Encoding: "utf-8" })
+fm.OpenP(0, 1)
+str := ''
+loop {
+    str .= fm.Read()
+    ; do work
+    if !fm.NextPage(1) {
+        break
+    }
+}
+```
+
 # Encoding
 
 You can use `FileMapping` with any encoding supported by AHK's `StrPut` and `StrGet` functions. The
