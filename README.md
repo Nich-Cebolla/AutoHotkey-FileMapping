@@ -184,7 +184,7 @@ views to a limited range to minimize concurrent memory usage.
 The library considers one page to be equivalent to the system's virtual memory allocation granularity,
 typically 65536 bytes. I included the page system to make it easier to work with the API's alignment
 requirements, but you do not need to think or worry about what they mean or how they impact the
-code, because the library handles all of that intenally.
+code, because the library handles all of that internally.
 
 For large data, you can enumerate a file mapping object's pages by calling the object in a `for`
 loop. You can see a number of examples of this in the test file test\test.ahk, but below is a short
