@@ -174,8 +174,8 @@ class FileMapping {
      * `CreateFileMapping` requests a handle to the existing file mapping object instead of creating
      * a new object. If the name exists but is some other type of object, the function fails.
      *
-     * Note: If you are reading this from the source file, the backslashes below are escaped so the
-     * markdown renderer displays them correctly. Treat each backslash pair as a single backslash.
+     * <!-- Note: If you are reading this from the source file, the backslashes below are escaped so the
+     * markdown renderer displays them correctly. Treat each backslash pair as a single backslash. -->
      *
      * To direct {@link FileMapping.Prototype.__New} to generate a random name, set `Options.Name`
      * with any string that ends with a backslash optionally followed by a number representing the
