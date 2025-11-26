@@ -2,8 +2,6 @@
 #SingleInstance force
 #include ..\src\FileMapping.ahk
 
-; Left off at trying to figure out why the LargePages option is causing an error.
-
 if !A_IsCompiled && A_ScriptFullPath == A_LineFile {
     test_FileMapping()
     OutputDebug(A_ScriptFullPath ' : complete`n')
