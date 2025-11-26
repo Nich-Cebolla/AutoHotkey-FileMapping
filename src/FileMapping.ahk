@@ -491,15 +491,12 @@ class FileMapping {
      * @throws {OSError} - If `FlushViewOfFile` results in an error, `OSError()` is called.
      */
     Flush(Start?, Bytes?) {
-        if !this.hFile || this.hFile = INVALID_HANDLE_VALUE {
+        if !this.hFile <= 0 {
             throw Error('The ``FileMapping`` object is not associated with a file.')
-        }
-        if !IsSet(Start) {
-            Start := this.Ptr
         }
         if !DllCall(
             g_kernel32_FlushViewOfFile
-          , 'ptr', Start
+          , 'ptr', Start ?? this.Ptr
           , 'uint', Bytes ?? this.__Pos
           , 'int'
         ) {
