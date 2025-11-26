@@ -491,7 +491,7 @@ class FileMapping {
      * @throws {OSError} - If `FlushViewOfFile` results in an error, `OSError()` is called.
      */
     Flush(Start?, Bytes?) {
-        if !this.hFile <= 0 {
+        if this.hFile <= 0 {
             throw Error('The ``FileMapping`` object is not associated with a file.')
         }
         if !DllCall(
@@ -512,7 +512,7 @@ class FileMapping {
      * @throws {OSError} - If `FlushFileBuffers` results in an error, `OSError()` is called.
      */
     FlushFileBuffers() {
-        if !this.hFile || this.hFile = INVALID_HANDLE_VALUE {
+        if this.hFile <= 0 {
             throw Error('The ``FileMapping`` object is not associated with a file.')
         }
         if !DllCall(g_kernel32_FlushFileBuffers, 'ptr', this.hFile, 'int') {
@@ -1430,7 +1430,7 @@ class FileMapping {
      * @throws {OSError} - If `SetFileTime` results in an error, `OSError()` is called.
      */
     SetFileTime(lpCreationTime := 0, lpLastAccessTime := 0, lpLastWriteTime := 0) {
-        if !this.hFile || this.hFile = INVALID_HANDLE_VALUE {
+        if this.hFile <= 0 {
             throw Error('The ``FileMapping`` object is not associated with a file.')
         }
         if !DllCall(
@@ -1569,7 +1569,7 @@ class FileMapping {
      * @throws {OSError} - If `SetFileTime` results in an error, `OSError()` is called.
      */
     UpdateFileTime() {
-        if !this.hFile || this.hFile = INVALID_HANDLE_VALUE {
+        if this.hFile <= 0 {
             throw Error('The ``FileMapping`` object is not associated with a file.')
         }
         ft := FileMapping_SystemTime().ToFileTime()
