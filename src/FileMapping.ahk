@@ -1991,7 +1991,7 @@ class FileMapping {
      * which represents the size of the current view in pages.
      * @instance
      * @member {FileMapping}
-     * @type {Integer}
+     * @type {Float}
      */
     Pages => this.Size / FileMapping_VirtualMemoryGranularity
     /**
@@ -2067,7 +2067,7 @@ class FileMapping {
      * which represents the maximum size of the file mapping object in pages.
      * @instance
      * @member {FileMapping}
-     * @type {Integer}
+     * @type {Float}
      */
     TotalPages => this.MaxSize / FileMapping_VirtualMemoryGranularity
     /**
