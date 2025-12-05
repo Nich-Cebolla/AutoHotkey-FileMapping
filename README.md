@@ -624,6 +624,10 @@ want to use it.
 
 # Changelog
 
+- **2025-12-05** - v2.0.1
+  - Change:
+    - test\test.ahk - Updated tests to evaluate both utf-8 and utf-16 encodings.
+
 - **2025-12-05** - v2.0.0
   - Release version 2.0.0. See [New in v2.0.0](#new-in-v200).
 
