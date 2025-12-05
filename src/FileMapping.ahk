@@ -170,7 +170,7 @@ class FileMapping {
      * using {@link FileMapping} for inter-process communication.
      *
      * When creating a file mapping object, the name must be unique across the system. If the name is
-     * already in use, and the current name is associated with an existing file mapping object,
+     * already in use, and the name is associated with an existing file mapping object,
      * `CreateFileMapping` requests a handle to the existing file mapping object instead of creating
      * a new object. If the name exists but is some other type of object, the function fails.
      *
@@ -436,6 +436,396 @@ class FileMapping {
         }
     }
     /**
+     * @description - Makes a copy of a string from the file mapping object begining at the file
+     * pointer's current position, then overwrites the bytes by shifting the data that is to the
+     * right of the copied string leftward, effectively "removing" the string from the data.
+     * The file pointer's position does not change. Returns the copied string.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * In the below example, `str` would contain the data starting at `fm.Pos` and ending after 105
+     * characters, or at the first null terminator, whichever is first. All of the data after the end
+     * of `str` would then be moved to the left, overwriting the entirety of `str`. Since the below
+     * file mapping object would be blank, nothing would change because file mapping objects are
+     * initialized filled with 0s.
+     * @example
+     * fm := FileMapping({ MaxSize: 250 })
+     * fm.Open()
+     * ; Set the file pointer
+     * fm.Pos := 20
+     * ; length in characters to remove from the data, beginning at fm.Pos
+     * length := 105
+     * ; specifies the end of the data range that will be shifted left
+     * endOffset := fm.MaxSize
+     * str := fm.Cut(length, endOffset)
+     * OutputDebug(str "`n") ; <empty>
+     * OutputDebug(fm.Pos "`n") ; 20
+     * @
+     *
+     * In the below example, `str` would contain the data starting at `fm.Pos` and ending after 15
+     * characters. All of the data after the end of `str` would then be moved to the left, overwriting
+     * the entirety of `str`. `str2` would contain the data that was to the left of `str` and the data
+     * that was to the right of `str`. `str2` would be 235 characters because the 15 characters
+     * were "removed from" `str` (more accurately, 15 characters were overwritten by the data to the
+     * right of `str`).
+     * @example
+     * fm := FileMapping({ MaxSize: 500 })
+     * fm.Open()
+     * s := ''
+     * VarSetStrCapacity(&s, 250)
+     * ; Remember that default encoding is UTF-16
+     * ; so there are 2 bytes per 1 character.
+     * loop 25 {
+     *     s .= '0123456789'
+     * }
+     * OutputDebug(fm.Write2(&s) "`n") ; 500
+     * ; Set the file pointer
+     * fm.Pos := 20
+     * ; length in characters to remove
+     * ; from the data, beginning at fm.Pos
+     * length := 15
+     * ; Specifying `EndOffset` is
+     * ; usually not necessary.
+     * str := fm.Cut(length)
+     * OutputDebug(str "`n") ; 012345678901234
+     * OutputDebug(fm.Pos "`n") ; 20
+     * fm.Pos := 0
+     * str2 := fm.Read()
+     * OutputDebug(StrLen(str2) "`n") ; 235
+     * OutputDebug(fm.Pos "`n") ; 470
+     * @
+     *
+     * @param {Integer} [Length] - The maximum number of characters to read.
+     *
+     * If `Length` is set:
+     * - If `EndOffset` is set, and if `Length` would cause the string to exceed `EndOffset`, `Length`
+     *   is truncated to `EndOffset`.
+     * - If `EndOffset` is unset, and if `Length` would cause the string to exceed the end of the
+     *   current view, `Length` is truncated to the end of the file mapping object's maximum size.
+     *
+     * In all cases, if a null terminator is encountered when reading the string, the string that is
+     * cut will include the data between the file pointer's position and the null terminator.
+     *
+     * @param {Integer} [EndOffset] - If set, `EndOffset` indicates the last byte that will be shifted
+     * left by this function. The offset is relative to the start of the file mapping object. If the
+     * current view does not include `EndOffset` in its range, {@link FileMapping.Prototype.Cut} caches
+     * the current view size and opens a view up to `EndOffset`. After {@link FileMapping.Prototype.Cut}
+     * makes a copy of the target string, it moves the data between the end of the copied string
+     * and `EndOffset` to the file pointer's current position.
+     *
+     * If `EndOffset` is greater than the maximum size of the file mapping object
+     * ({@link FileMapping.Prototype.MaxSize}), `EndOffset` is set to the maximum size of the file
+     * mapping object.
+     *
+     * If {@link FileMapping.Prototype.Cut} opened a larger view, it closes the view and opens a view
+     * with the original size.
+     *
+     * If unset, after {@link FileMapping.Prototype.Cut} makes a copy of the target string, it moves
+     * all data that follows the end of the copied string to the file pointer's current position.
+     *
+     * @param {Boolean} [Terminate = true] - If true, {@link FileMapping.Prototype.Cut} inserts a
+     * null terminator at the end of the data that was moved.
+     *
+     * @returns {String} - The string read from the view.
+     *
+     * @throws {ValueError} - "`EndOffset` is greater than the file mapping object`'s maximum size."
+     */
+    Cut(Length?, EndOffset?, Terminate := true) {
+        offset := this.__Pos
+        if IsSet(EndOffset) {
+            if EndOffset > this.MaxSize {
+                    EndOffset := this.MaxSize
+            }
+        } else {
+            EndOffset := this.MaxSize
+        }
+        if this.ViewEnd < EndOffset {
+            sz := this.Size
+            page := this.Page
+            this.CloseView()
+            this.OpenView(page * FileMapping_VirtualMemoryGranularity, EndOffset - Page * FileMapping_VirtualMemoryGranularity)
+        }
+        if IsSet(Length) {
+            bytes := Length * this.BytesPerChar
+        } else {
+            bytes := EndOffset - this.ViewStart - offset
+            Length := Floor(bytes / this.BytesPerChar)
+        }
+        str := StrGet(this.Ptr + offset, Length, this.Encoding)
+        endOfStringOffset := offset + StrLen(str) * this.BytesPerChar
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset
+          , 'ptr', this.Ptr + endOfStringOffset
+          , 'uint', EndOffset - endOfStringOffset
+          , 'cdecl'
+        )
+        if Terminate {
+            this.TerminateEx(EndOffset - endOfStringOffset + offset)
+        }
+        if IsSet(sz) {
+            this.CloseView()
+            this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+        }
+        this.__Pos := offset
+        return str
+    }
+    /**
+     * @description - This is the same as {@link FileMapping.Prototype.Cut2} except the cut string
+     * is returned by the VarRef parameter.
+     *
+     * Makes a copy of a string from the file mapping object begining at the file
+     * pointer's current position, then overwrites the bytes by shifting the data that is to the
+     * right of the copied string leftward, effectively "removing" the string from the data.
+     * The file pointer's position does not change. Returns the copied string.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * @param {VarRef} OutStr - A variable that will receive the cut string.
+     *
+     * @param {Integer} [Length] - The maximum number of characters to read.
+     *
+     * If `Length` is set:
+     * - If `EndOffset` is set, and if `Length` would cause the string to exceed `EndOffset`, `Length`
+     *   is truncated to `EndOffset`.
+     * - If `EndOffset` is unset, and if `Length` would cause the string to exceed the end of the
+     *   current view, `Length` is truncated to the end of the file mapping object's maximum size.
+     *
+     * In all cases, if a null terminator is encountered when reading the string, the string that is
+     * cut will include the data between the file pointer's position and the null terminator.
+     *
+     * @param {Integer} [EndOffset] - If set, `EndOffset` indicates the last byte that will be shifted
+     * left by this function. The offset is relative to the start of the file mapping object. If the
+     * current view does not include `EndOffset` in its range, {@link FileMapping.Prototype.Cut2} caches
+     * the current view size and opens a view up to `EndOffset`. After {@link FileMapping.Prototype.Cut2}
+     * makes a copy of the target string, it moves the data between the end of the copied string
+     * and `EndOffset` to the file pointer's current position.
+     *
+     * If `EndOffset` is greater than the maximum size of the file mapping object
+     * ({@link FileMapping.Prototype.MaxSize}), `EndOffset` is set to the maximum size of the file
+     * mapping object.
+     *
+     * If {@link FileMapping.Prototype.Cut2} opened a larger view, it closes the view and opens a view
+     * with the original size.
+     *
+     * If unset, after {@link FileMapping.Prototype.Cut2} makes a copy of the target string, it moves
+     * all data that follows the end of the copied string to the file pointer's current position.
+     *
+     * If `EndOffset` is greater than the file mapping object's maximum size
+     * ({@link FileMapping.Prototype.MaxSize}), the function fails and returns 0.
+     *
+     * @param {Boolean} [Terminate = true] - If true, {@link FileMapping.Prototype.Cut2} inserts a
+     * null terminator at the end of the data that was moved.
+     *
+     * @returns {Integer} - If successful, the offset of the end of the data that was moved left
+     * relative to the start of the file mapping object (before the null terminator if `Terminate`
+     * is true). If unsuccessful, 0.
+     */
+    Cut2(&OutStr, Length?, EndOffset?, Terminate := true) {
+        offset := this.__Pos
+        if IsSet(EndOffset) {
+            if EndOffset > this.MaxSize {
+                EndOffset := this.MaxSize
+            }
+        } else {
+            EndOffset := this.MaxSize
+        }
+        if this.ViewEnd < EndOffset {
+            sz := this.Size
+            page := this.Page
+            this.CloseView()
+            this.OpenView(page * FileMapping_VirtualMemoryGranularity, EndOffset - Page * FileMapping_VirtualMemoryGranularity)
+        }
+        if IsSet(Length) {
+            bytes := Length * this.BytesPerChar
+        } else {
+            bytes := EndOffset - this.ViewStart - offset
+            Length := Floor(bytes / this.BytesPerChar)
+        }
+        OutStr := StrGet(this.Ptr + offset, Length, this.Encoding)
+        endOfStringOffset := offset + StrLen(OutStr) * this.BytesPerChar
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset
+          , 'ptr', this.Ptr + endOfStringOffset
+          , 'uint', EndOffset - endOfStringOffset
+          , 'cdecl'
+        )
+        if Terminate {
+            this.TerminateEx(EndOffset - endOfStringOffset + offset)
+        }
+        if IsSet(sz) {
+            this.CloseView()
+            this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+        }
+        this.__Pos := offset
+        return EndOffset - endOfStringOffset + offset
+    }
+    /**
+     * @description - Makes a copy of a string from the file mapping object begining at the file
+     * pointer's current position. The end of the string is identified by a regular expression pattern.
+     * After copying the string, overwrites the bytes by shifting the data that is to the right of
+     * the copied string leftward, effectively "removing" the string from the data. The file pointer's
+     * position does not change. Returns the copied string.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * In the below example, `str` would contain the data starting at `fm.Pos` and ending after 15
+     * characters. All of the data after the end of `str` would then be moved to the left, overwriting
+     * the entirety of `str`. `str2` would contain the data that was to the left of `str` and the data
+     * that was to the right of `str`. `str2` would be 235 characters because the 15 characters
+     * were "removed from" `str` (more accurately, 15 characters were overwritten by the data to the
+     * right of `str`).
+     * @example
+     * fm := FileMapping({ MaxSize: 150 })
+     * fm.Open()
+     * OutputDebug(fm.Write('ABC01DEF23GHI45JKL67MNO89PQR01STU23VWX45YZ[67\]^89_') "`n") ; 102
+     * ; Set the file pointer
+     * fm.Pos := 20
+     * ; The pattern will cause CutEx to stop
+     * ; at two consecutive integers that are
+     * ; 7, 8, or 9.
+     * str := fm.CutEx("[789]{2}")
+     * ; By default, the match is included
+     * ; in the output.
+     * OutputDebug(str "`n") ; GHI45JKL67MNO89
+     * OutputDebug(fm.Pos "`n") ; 20
+     * fm.Pos := 0
+     * str2 := fm.Read()
+     * ; The output string was removed
+     * ; from the file mapping object.
+     * OutputDebug(str2 "`n") ; ABC01DEF23PQR01STU23VWX45YZ[67\]^89_
+     * OutputDebug(fm.Pos "`n") ; 72
+     * fm.Pos := 30
+     * str3 := fm.CutEx("[789]{2}", , , false)
+     * OutputDebug(str3 "`n") ; STU23VWX45YZ[67\]^
+     * fm.Pos := 0
+     * str4 := fm.Read()
+     * OutputDebug(str4 "`n") ; ABC01DEF23PQR0189_
+     * OutputDebug(fm.Pos "`n") ; 36
+     * @
+     *
+     * @param {String} Pattern - `Pattern` is expected to be a regular expression.
+     * {@link FileMapping.Prototype.CutEx} calls `RegExMatch` in a loop until a match is found,
+     * increasing the size of the view if necessary. If a match is found,
+     * {@link FileMapping.Prototype.CutEx} makes a copy of the file mapping object's contents
+     * beginning at the current file pointer position and ending at the end of the matched text. To
+     * instead direct {@link FileMapping.Prototype.CutEx} to make a copy of the contents ending just
+     * before the matched text, set parameter `IncludeMatch` to false.
+     *
+     * When {@link FileMapping.Prototype.CutEx} is looping through its contents, if it encounters
+     * a null terminator, the loop ends and if `RegExMatch` returns 0, the function fails and returns
+     * an empty string.
+     *
+     * After successfully finding a match and copying the string, {@link FileMapping.Prototype.CutEx}
+     * shifts the remaining data to the left, overwriting the string. If
+     * {@link FileMapping.Prototype.CutEx} increased the size of the view, it reverts the view
+     * to the original size. {@link FileMapping.Prototype.CutEx} returns the string.
+     *
+     * If no match is found, {@link FileMapping.Prototype.CutEx} returns an empty string and does
+     * not alter the data.
+     *
+     * If {@link FileMapping.Prototype.CutEx} increased the size of the view, it closes the view
+     * and opens a new view with the same start page and size as the original view.
+     *
+     * @param {Integer} [EndOffset] - If set, `EndOffset` indicates the last byte that will be shifted
+     * left by this function. The offset is relative to the start of the file mapping object. If the
+     * current view does not include `EndOffset` in its range, {@link FileMapping.Prototype.CutEx} caches
+     * the current view size and opens a view up to `EndOffset`. After {@link FileMapping.Prototype.CutEx}
+     * makes a copy of the target string, it moves the data between the end of the target string
+     * and `EndOffset` to the file pointer's current position.
+     *
+     * If `EndOffset` is greater than the maximum size of the file mapping object
+     * ({@link FileMapping.Prototype.MaxSize}), `EndOffset` is set to the maximum size of the file
+     * mapping object.
+     *
+     * If {@link FileMapping.Prototype.CutEx} opened a larger view, it closes the view and opens a view
+     * with the original size.
+     *
+     * If unset, after {@link FileMapping.Prototype.CutEx} makes a copy of the target string, it moves
+     * the data between the end of the target string and the end of the view to the file pointer's
+     * current position.
+     *
+     * @param {Boolean} [Terminate = true] - If true, {@link FileMapping.Prototype.CutEx} inserts a
+     * null terminator at the end of the data that was moved.
+     *
+     * @param {Boolean} [IncludeMatch = true] - If true, {@link FileMapping.Prototype.CutEx} includes
+     * the matched text with the target string. If false, {@link FileMapping.Prototype.CutEx} does
+     * not include the matched text with the target string.
+     *
+     * @returns {String} - The string read from the view.
+     */
+    CutEx(Pattern, EndOffset?, Terminate := true, IncludeMatch := true) {
+        offset := this.__Pos
+        str := this.Read()
+        if !RegExMatch(str, Pattern, &match) {
+            page := this.Page
+            sz := this.Size
+            while this.AtEoV {
+                if this.ExtendView(FileMapping_VirtualMemoryGranularity) {
+                    this.Read3(&str)
+                    if RegExMatch(str, Pattern, &match) {
+                        break
+                    }
+                } else {
+                    if this.AtEoV && this.Size != this.MaxSize {
+                        this.ExtendView(FileMapping_VirtualMemoryGranularity, true)
+                        this.Read3(&str)
+                    }
+                    RegExMatch(str, Pattern, &match)
+                    break
+                }
+            }
+        }
+        if match {
+            if IncludeMatch {
+                bytes := (match.Pos + match.Len - 1) * this.BytesPerChar
+            } else {
+                bytes := (match.Pos - 1) * this.BytesPerChar
+            }
+        } else {
+            if IsSet(sz) && sz != this.Size {
+                this.CloseView()
+                this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+            }
+            return
+        }
+        if IsSet(EndOffset) {
+            if EndOffset > this.MaxSize {
+                EndOffset := this.MaxSize
+            }
+        } else {
+            EndOffset := this.MaxSize
+        }
+        if this.ViewEnd < EndOffset {
+            sz := this.Size
+            page := this.Page
+            this.CloseView()
+            this.OpenView(page * FileMapping_VirtualMemoryGranularity, EndOffset - Page * FileMapping_VirtualMemoryGranularity)
+        }
+        str := StrGet(this.Ptr + offset, Floor(bytes / this.BytesPerChar), this.Encoding)
+        endOfStringOffset := offset + StrLen(str) * this.BytesPerChar
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset
+          , 'ptr', this.Ptr + endOfStringOffset
+          , 'uint', EndOffset - endOfStringOffset
+          , 'cdecl'
+        )
+        if Terminate {
+            this.TerminateEx(EndOffset - endOfStringOffset + offset)
+        }
+        if IsSet(sz) {
+            this.CloseView()
+            this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+        }
+        this.__Pos := offset
+        return str
+    }
+    /**
      * @description - Closes the current view and reopens a larger view to the same page. The end
      * of the view is rounded up to the next page or to the end of the file mapping object, whichever
      * is lesser.
@@ -553,6 +943,269 @@ class FileMapping {
         if (b1 == 0xFE && b2 == 0xFF) {
             return 'cp1201'
         }
+    }
+    /**
+     * @description - Inserts a string at the current position, shifting the existing content to
+     * the right and moving the file pointer.
+     *
+     * If the current view is insufficient to receive the entire string, and if the size of the file
+     * mapping object is sufficient to receive the entire string, {@link FileMapping.Prototype.Insert}
+     * closes the current view and opens a view large enough to receive the string, rounded up to the
+     * next page or to the end of the file mapping object, whichever is lesser.
+     *
+     * If the size of the file mapping object is insufficient to receive the entire data, the behavior
+     * of {@link FileMapping.Prototype.Insert} is determined by parameter `AdjustMaxSize`.
+     *
+     * If there is data near the end of the view, that data is overwritten. Specifically, any data
+     * that is within `StrLen(Str) * FileMappingObj.BytesPerChar` bytes from the end of the view
+     * is overwritten. If {@link FileMapping.Prototype.Insert} opens a larger view due to the size of
+     * `Str`, then it is the data near the end of the newly opened view that is ovewritten.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * @example
+     * fm := FileMapping({ MaxSize: 1000 })
+     * fm.Open()
+     * ; Fills 200 bytes with a random string
+     * loop 100 {
+     *     StrPut(Chr(Random(65, 90)), fm.Ptr + (A_Index - 1) * fm.BytesPerChar, fm.Encoding)
+     * }
+     * ; Copy bytes 50-89 for demonstration
+     * fm.Pos := 50
+     * str_original := fm.Read(40 / fm.BytesPerChar)
+     * ; String to insert
+     * str_insert := ''
+     * VarSetStrCapacity(&str_insert, 40 / fm.BytesPerChar)
+     * loop 40 / fm.BytesPerChar {
+     *     str_insert .= Chr(Random(65, 90))
+     * }
+     * fm.Pos := 50
+     * fm.Insert(str_insert)
+     * ; The new file pointer position
+     * OutputDebug(fm.Pos "`n") ; 90
+     * ; This demonstrates that bytes 50-89 of the
+     * ; file mapping object are the same as `str`
+     * fm.Pos := 50
+     * str_post_insert := fm.Read(40 / fm.BytesPerChar)
+     * OutputDebug((str_insert = str_post_insert) "`n") ; 1
+     * ; This demonstrates that bytes 90-129 of
+     * ; the file mapping object are the same
+     * ; as the bytes copied from 50-89 of
+     * ; the file mapping object earlier.
+     * str_moved := fm.Read(40 / fm.BytesPerChar)
+     * OutputDebug((str_moved = str_original) "`n") ; 1
+     * @
+     *
+     * @param {String} Str - The string to insert.
+     *
+     * @param {Boolean} [AdjustMaxSize = false] - Understand that if the file mapping object is opened
+     * in more than one process, you must not set `AdjustMaxSize` to true unless all other processes
+     * call `CloseHandle` to close their handle.
+     *
+     * If true, and if performing the insert operation would exceed the file mapping object's maximum
+     * size, the file mapping object is closed and re-opened with a new maximum size to accommodate
+     * the data (the original maximum size is doubled until a sufficient size is reached). A view is
+     * then opened that is sufficient to receive the entire data, rounded up to the next page or to
+     * the end of the file mapping object, whichever is lesser.
+     *
+     * If false, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the data is not copied and the function returns 0.
+     *
+     * @returns {Integer} - The number of bytes written.
+     */
+    Insert(Str, AdjustMaxSize := false) {
+        offset := this.__Pos
+        bytes := StrLen(Str) * this.BytesPerChar
+        if bytes + offset > this.Size {
+            if this.ViewStart + offset + bytes > this.MaxSize {
+                if AdjustMaxSize {
+                    this.AdjustMaxSize(bytes)
+                } else {
+                    return 0
+                }
+            } else {
+                this.ExtendView(bytes)
+            }
+        }
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset + bytes
+          , 'ptr', this.Ptr + offset
+          , 'uint', this.Size - offset - bytes
+          , 'cdecl'
+        )
+        StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        this.__Pos += bytes
+        return bytes
+    }
+    /**
+     * @description - This is the same as {@link FileMapping.Prototype.Insert} except `Str` is
+     * a VarRef.
+     *
+     * Inserts a string at the current position, shifting the existing content to the right and
+     * moving the file pointer.
+     *
+     * If the current view is insufficient to receive the entire data, and if the size of the file
+     * mapping object is sufficient to receive the entire data, {@link FileMapping.Prototype.Insert}
+     * closes the current view and opens a view large enough to receive the data, rounded up to the
+     * next page or to the end of the file mapping object, whichever is lesser.
+     *
+     * If the size of the file mapping object is insufficient to receive the entire data, the behavior
+     * of {@link FileMapping.Prototype.Insert} is determined by parameter `AdjustMaxSize`.
+     *
+     * If there is data near the end of the view, that data is overwritten. Specifically, any data
+     * that is within `StrLen(Str) * FileMappingObj.BytesPerChar` bytes from the end of the view
+     * is overwritten.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * @example
+     * fm := FileMapping({ MaxSize: 1000 })
+     * fm.Open()
+     * ; Fills 200 bytes with a random string
+     * loop 100 {
+     *     StrPut(Chr(Random(65, 90)), fm.Ptr + (A_Index - 1) * fm.BytesPerChar, fm.Encoding)
+     * }
+     * ; Copy bytes 50-89 for demonstration
+     * fm.Pos := 50
+     * str_original := fm.Read(40 / fm.BytesPerChar)
+     * ; String to insert
+     * str_insert := ''
+     * VarSetStrCapacity(&str_insert, 40 / fm.BytesPerChar)
+     * loop 40 / fm.BytesPerChar {
+     *     str_insert .= Chr(Random(65, 90))
+     * }
+     * fm.Pos := 50
+     * fm.Insert2(&str_insert)
+     * ; The new file pointer position
+     * OutputDebug(fm.Pos "`n") ; 90
+     * ; This demonstrates that bytes 50-89 of the
+     * ; file mapping object are the same as `str`
+     * fm.Pos := 50
+     * str_post_insert := fm.Read(40 / fm.BytesPerChar)
+     * OutputDebug((str_insert = str_post_insert) "`n") ; 1
+     * ; This demonstrates that bytes 90-129 of
+     * ; the file mapping object are the same
+     * ; as the bytes copied from 50-89 of
+     * ; the file mapping object earlier.
+     * str_moved := fm.Read(40 / fm.BytesPerChar)
+     * OutputDebug((str_moved = str_original) "`n") ; 1
+     * @
+     *
+     * @param {VarRef} Str - A variable containing the string to insert.
+     *
+     * @param {Boolean} [AdjustMaxSize = false] - Understand that if the file mapping object is opened
+     * in more than one process, you must not set `AdjustMaxSize` to true unless all other processes
+     * call `CloseHandle` to close their handle.
+     *
+     * If true, and if performing the insert operation would exceed the file mapping object's maximum
+     * size, the file mapping object is closed and re-opened with a new maximum size to accommodate
+     * the data (the original maximum size is doubled until a sufficient size is reached). A view is
+     * then opened that is sufficient to receive the entire data, rounded up to the next page or to
+     * the end of the file mapping object, whichever is lesser.
+     *
+     * If false, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the data is not copied and the function returns 0.
+     *
+     * @returns {Integer} - The number of bytes written.
+     */
+    Insert2(&Str, AdjustMaxSize := false) {
+        offset := this.__Pos
+        bytes := StrLen(Str) * this.BytesPerChar
+        if bytes + offset > this.Size {
+            if this.ViewStart + offset + bytes > this.MaxSize {
+                if AdjustMaxSize {
+                    this.AdjustMaxSize(bytes)
+                } else {
+                    return 0
+                }
+            } else {
+                this.ExtendView(bytes)
+            }
+        }
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset + bytes
+          , 'ptr', this.Ptr + offset
+          , 'uint', this.Size - offset - bytes
+          , 'cdecl'
+        )
+        StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        this.__Pos += bytes
+        return bytes
+    }
+    /**
+     * @description - Reads from the current position until encountering the first null terminator,
+     * opening new pages if necessary, then shifts the data to the right to make room to insert
+     * `Str` into the original position. This method always ensures a null terminator exists
+     * immediately after the data that was moved, and returns the position of the null terminator
+     * as a byte offset from the start of the view.
+     *
+     * When the method returns, {@link FileMapping.Prototype.Pos} is set to the end of `Str`
+     * (the same as if a standard write operation were performed).
+     *
+     * If the current view is insufficient to receive the entire data, and if the size of the file
+     * mapping object is sufficient to receive the entire data, {@link FileMapping.Prototype.InsertEx}
+     * closes the current view and opens a view large enough to receive the data, rounded up to the
+     * next page or to the end of the file mapping object, whichever is lesser.
+     *
+     * If the size of the file mapping object is insufficient to receive the entire data, the behavior
+     * of {@link FileMapping.Prototype.InsertEx} is determined by parameter `AdjustMaxSize`.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * @param {String} Str - The string to insert.
+     *
+     * @param {Boolean} [AdjustMaxSize = false] - Understand that if the file mapping object is opened
+     * in more than one process, you must not set `AdjustMaxSize` to true unless all other processes
+     * call `CloseHandle` to close their handle.
+     *
+     * If true, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the file mapping object is closed and re-opened with a new maximum size to accommodate
+     * the data (the original maximum size is doubled until a sufficient size is reached). A view is
+     * then opened that is sufficient to receive the entire data, rounded up to the next page or to
+     * the end of the file mapping object, whichever is lesser.
+     *
+     * If false, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the data is not copied and the function returns 0.
+     *
+     * @returns {Integer} - The position of the null terminator as a byte offset from the start of
+     * the view.
+     */
+    InsertEx(Str, AdjustMaxSize := false) {
+        offset := this.__Pos
+        len := StrLen(Str)
+        chars := this.Read3(&Str)
+        while this.AtEoV {
+            if this.ExtendView(FileMapping_VirtualMemoryGranularity) {
+                chars += this.Read3(&Str)
+            } else {
+                if this.AtEoV && this.Size != this.MaxSize {
+                    this.ExtendView(FileMapping_VirtualMemoryGranularity, true)
+                    chars += this.Read3(&Str)
+                }
+                break
+            }
+        }
+        diff := offset + StrLen(Str) * this.BytesPerChar + this.BytesPerChar - this.Size
+        if diff > 0 {
+            _diff := this.ViewStart + offset + StrLen(Str) * this.BytesPerChar + this.BytesPerChar - this.MaxSize
+            if _diff > 0 {
+                if AdjustMaxSize {
+                    this.AdjustMaxSize(_diff)
+                } else {
+                    return 0
+                }
+            } else {
+                this.ExtendView(diff)
+            }
+        }
+        bytes := StrPut(Str, this.Ptr + offset, this.Encoding)
+        this.__Pos := offset + len * this.BytesPerChar
+        return offset + bytes
     }
     /**
      * @description - Closes the current view if opened, then opens the next view. This returns the
@@ -930,8 +1583,267 @@ class FileMapping {
         }
     }
     /**
-     * Copies data from the current position of the file mapping object to a buffer, and advances the
-     * file pointer.
+     * @description - Makes a copy of data from the file mapping object beginning at the file
+     * pointer's current position, then overwrites the bytes by shifting the data that is to the
+     * right of the copied data leftward, effectively "removing" the data. The file pointer's
+     * position does not change.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * @example
+     * fm := FileMapping({ MaxSize: 1000 })
+     * fm.Open()
+     * ; Fills 200 bytes with random numbers
+     * loop 50 {
+     *     NumPut("int", Random(1, 99999999), fm, A_Index - 1)
+     * }
+     * ; Copy bytes 40-79 for demonstration
+     * copy_cut := Buffer(40)
+     * DllCall("msvcrt.dll\memcpy", "ptr", fm.Ptr + 40, "ptr", copy_cut, "int", 40, "cdecl")
+     * ; Copy bytes 80-119 for demonstration
+     * copy_moved := Buffer(40)
+     * DllCall("msvcrt.dll\memcpy", "ptr", fm.Ptr + 80, "ptr", copy_moved, "int", 40, "cdecl")
+     * ; Cut bytes 40-79
+     * fm.Pos := 40
+     * cut_data := fm.RawCut(40)
+     * OutputDebug(fm.Pos "`n") ; 40
+     * ; This demonstrates that `cut_data`
+     * ; is the same as `copy_cut`.
+     * value := DllCall("msvcrt.dll\memcmp", "ptr", cut_data, "ptr", copy_cut, "int", 40, "cdecl")
+     * OutputDebug(value "`n") ; 0
+     * ; This demonstrates that bytes 40-79 of the
+     * ; file mapping object are the same as
+     * ; the bytes in `copy_moved`.
+     * value2 := DllCall("msvcrt.dll\memcmp", "ptr", fm.Ptr + 40, "ptr", copy_moved, "int", 40, "cdecl")
+     * OutputDebug(value2 "`n") ; 0
+     * @
+     *
+     * @param {Integer} Bytes - The number of bytes to copy and remove.
+     *
+     * If `EndOffset` is set, `Bytes` must be less or equal to the difference between the file pointer's
+     * current position and `EndOffset`.
+     *
+     * If `EndOffset` is unset, `Bytes` must be less than or equal to the difference between the file
+     * pointer's current position and the file mapping object's maximum size.
+     *
+     * If `Dest` is set, and if `Dest` is an object, `Bytes` must be less than or equal to
+     * `Dest.Size`.
+     *
+     * @param {*} [Dest] - If set, a `Buffer` object, an object with properties { Size, Ptr }, or
+     * an integer representing a pointer to the buffer to which the data will be copied. If unset,
+     * a `Buffer` is created with size `Bytes`.
+     *
+     * @param {Integer} [EndOffset] - If set, `EndOffset` indicates the last byte that will be shifted
+     * left by this function. The offset is relative to the start of the file mapping object. If the
+     * current view does not include `EndOffset` in its range, {@link FileMapping.Prototype.RawCut}
+     * caches the current view size and opens a view up to `EndOffset`. After
+     * {@link FileMapping.Prototype.RawCut} makes a copy of the target data, it shifts the data beginning
+     * from the end of the copied data and ending at `EndOffset`, shifting it left to the file
+     * pointer's current position, effectively overwriting the copied data.
+     *
+     * If `EndOffset` is greater than the maximum size of the file mapping object
+     * ({@link FileMapping.Prototype.MaxSize}), `EndOffset` is set to the maximum size of the file
+     * mapping object.
+     *
+     * If unset, the end of the file mapping object is used.
+     *
+     * If {@link FileMapping.Prototype.RawCut} opened a larger view, it closes the view and opens a
+     * view with the original size before returning.
+     *
+     * If unset, after {@link FileMapping.Prototype.RawCut} makes a copy of the target string, it moves
+     * the data between the end of the target string and the end of the view to the file pointer's
+     * current position.
+     *
+     * @param {Boolean} [Terminate = true] - If true, {@link FileMapping.Prototype.RawCut} inserts a
+     * null terminator at the end of the data that was moved.
+     *
+     * @returns {String} - The string read from the view.
+     *
+     * @throws {ValueError} - "`EndOffset` is greater than the file mapping object`'s maximum size."
+     * @throws {ValueError} - "'Invalid `Bytes` value."
+     * @throws {PropertyError} - "`Dest` must have properties `"Ptr`" and `"Size`"."
+     */
+    RawCut(Bytes, Dest?, EndOffset?, Terminate := true) {
+        offset := this.__Pos
+        if IsSet(EndOffset) {
+            if EndOffset > this.MaxSize {
+                EndOffset := this.MaxSize
+            }
+            if this.ViewEnd < EndOffset {
+                sz := this.Size
+                page := this.Page
+                this.CloseView()
+                this.OpenView(page * FileMapping_VirtualMemoryGranularity, EndOffset - Page * FileMapping_VirtualMemoryGranularity)
+            }
+        } else {
+            EndOffset := this.MaxSize
+        }
+        if offset + Bytes + this.ViewStart > EndOffset {
+            throw ValueError('Invalid ``Bytes`` value.', , Bytes)
+        }
+        if IsSet(Dest) {
+            if IsObject(Dest) {
+                if HasProp(Dest, 'Size') && HasProp(Dest, 'Ptr') {
+                    if Bytes > Dest.Size {
+                        throw Error('``Bytes`` exceeds ``Dest.Size``.', , Bytes)
+                    }
+                } else {
+                    throw PropertyError('``Dest`` must have properties "Ptr" and "Size".')
+                }
+            }
+        } else {
+            Dest := Buffer(Bytes)
+        }
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', Dest
+          , 'ptr', this.Ptr + offset
+          , 'uint', Bytes
+          , 'cdecl'
+        )
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset
+          , 'ptr', this.Ptr + offset + bytes
+          , 'uint', EndOffset - bytes
+          , 'cdecl'
+        )
+        if Terminate {
+            this.TerminateEx(EndOffset - bytes + offset)
+        }
+        if IsSet(sz) {
+            this.CloseView()
+            this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+        }
+        this.__Pos := Bytes
+        return Dest
+    }
+    /**
+     * @description - Inserts data into the current position, shifting the existing content to
+     * the right and moving the file pointer.
+     *
+     * If the current view is insufficient to receive the entire data, and if the size of the file
+     * mapping object is sufficient to receive the entire data, {@link FileMapping.Prototype.RawInsert}
+     * closes the current view and opens a view large enough to receive the data, rounded up to the
+     * next page or to the end of the file mapping object, whichever is lesser.
+     *
+     * If the size of the file mapping object is insufficient to receive the entire data, the behavior
+     * of {@link FileMapping.Prototype.RawInsert} is determined by parameter `AdjustMaxSize`.
+     *
+     * If there is data near the end of the view, that data is overwritten. Specifically, any data
+     * that is within `Bytes` bytes from the end of the view is overwritten.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * @example
+     * fm := FileMapping({ MaxSize: 1000 })
+     * fm.Open()
+     * ; Fills 200 bytes with random numbers
+     * loop 50 {
+     *     NumPut("int", Random(1, 99999999), fm, A_Index - 1)
+     * }
+     * ; Copy bytes 50-89 for demonstration
+     * copy := Buffer(40)
+     * DllCall("msvcrt.dll\memcpy", "ptr", fm.Ptr + 50, "ptr", copy, "int", 40, "cdecl")
+     * ; Data to insert
+     * data := Buffer(40)
+     * ; Fills 40 bytes
+     * loop 10 {
+     *     NumPut("int", A_Index, data, A_Index - 1)
+     * }
+     * fm.Pos := 50
+     * fm.RawInsert(data)
+     * ; The new file pointer position
+     * OutputDebug(fm.Pos "`n") ; 90
+     * ; This demonstrates that bytes 50-89 of the
+     * ; file mapping object are the same as
+     * ; the bytes in `data`.
+     * value := DllCall("msvcrt.dll\memcmp", "ptr", fm.Ptr + 50, "ptr", data, "int", 40, "cdecl")
+     * OutputDebug(value "`n") ; 0
+     * ; This demonstrates that bytes 90-129 of
+     * ; the file mapping object are the same
+     * ; as the bytes copied from 50-89 of
+     * ; the file mapping object earlier.
+     * value2 := DllCall("msvcrt.dll\memcmp", "ptr", fm.Ptr + 90, "ptr", copy, "int", 40, "cdecl")
+     * OutputDebug(value2 "`n") ; 0
+     * @
+     *
+     * @param {*} Data - A pointer to the source of the data, or a Buffer containing the data, or an
+     * object with properties "Ptr" and "Size".
+     *
+     * @param {Integer} [Bytes] - The number of bytes to copy from `Data`. `Bytes` must be less than
+     * or equal to the size of `Data`. `Bytes` can be left unset if `Data` is an object; the "Size"
+     * property is used to deterine the size of the data.
+     *
+     * @param {Boolean} [AdjustMaxSize = false] - Understand that if the file mapping object is opened
+     * in more than one process, you must not set `AdjustMaxSize` to true unless all other processes
+     * call `CloseHandle` to close their handle.
+     *
+     * If true, and if performing the insert operation would exceed the file mapping object's maximum
+     * size, the file mapping object is closed and re-opened with a new maximum size to accommodate
+     * the data (the original maximum size is doubled until a sufficient size is reached). A view is
+     * then opened that is sufficient to receive the entire data, rounded up to the next page or to
+     * the end of the file mapping object, whichever is lesser.
+     *
+     * If false, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the data is not copied and the function returns 0.
+     *
+     * @returns {Integer} - The number of bytes written.
+     *
+     * @throws {Error} - "`Bytes` exceeds `Data.Size`."
+     * @throws {Error} - "`Data` must have properties `"Ptr`" and `"Size`"."
+     * @throws {Error} - "`Bytes` must be set when `Data` is not an object."
+     */
+    RawInsert(Data, Bytes?, AdjustMaxSize := false) {
+        if IsObject(Data) {
+            if HasProp(Data, 'Size') && HasProp(Data, 'Ptr') {
+                if IsSet(Bytes) {
+                    if Bytes > Data.Size {
+                        throw Error('``Bytes`` exceeds ``Data.Size``.', , Bytes)
+                    }
+                } else {
+                    Bytes := Data.Size
+                }
+            } else {
+                throw PropertyError('``Data`` must have properties "Ptr" and "Size".')
+            }
+        } else if !IsSet(Bytes) {
+            throw Error('``Bytes`` must be set when ``Data`` is not an object.')
+        }
+        offset := this.__Pos
+        if bytes + offset > this.Size {
+            if this.ViewStart + offset + bytes > this.MaxSize {
+                if AdjustMaxSize {
+                    this.AdjustMaxSize(bytes)
+                } else {
+                    return 0
+                }
+            } else {
+                this.ExtendView(bytes)
+            }
+        }
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset + bytes
+          , 'ptr', this.Ptr + offset
+          , 'uint', this.Size - offset - bytes
+          , 'cdecl'
+        )
+        DllCall(
+            g_msvcrt_memmove
+          , 'ptr', this.Ptr + offset
+          , 'ptr', Data
+          , 'uint', bytes
+          , 'cdecl'
+        )
+        this.__Pos += bytes
+        return Bytes
+    }
+    /**
+     * @description - Copies data from the file mapping object to a buffer, beginning at the file
+     * pointer's current position, and advances the file pointer.
      *
      * If the current view is insufficient to retrieve the entire data, and if `Bytes` is less than
      * or equal to the remaining data in the file mapping object, {@link FileMapping.Prototype.RawRead}
@@ -941,14 +1853,20 @@ class FileMapping {
      * If `Bytes` exceeds the actual number of bytes remaining between {@link FileMapping.Prototype.Pos}
      * and {@link FileMapping.Prototype.MaxSize}, an error is thrown.
      *
-     * @param {*} Dest - A pointer to a buffer, or a `Buffer` object, or an object with properties
-     * "Ptr" and "Size". If `Dest` is an object, and if `Bytes` exceeds `Dest.Size`, an error is thrown.
+     * @param {*} Dest - A `Buffer` object, an object with properties { Size, Ptr }, or an integer
+     * representing a pointer to the buffer to which the data will be copied. If `Dest` is an object,
+     * and if `Bytes` exceeds `Dest.Size`, an error is thrown.
      *
      * @param {Integer} [Bytes] - The number of bytes to copy from the file mapping object. If unset,
-     * the remaining data between {@link FileMapping.Prototype.Pos} and
-     * {@link FileMapping#Size} is used. `Bytes` must be less than or equal to the size of `Dest`.
+     * {@link FileMapping.Prototype.RawRead} copies the data between the file pointer's current
+     * position and the end of the current view. If `Dest` and `Bytes` are set, `Bytes` must be less
+     * than or equal to the size of `Dest`.
      *
      * @returns {Integer} - The number of bytes copied.
+     *
+     * @throws {Error} - "`Bytes` exceeds the available remaining data in the file mapping object."
+     * @throws {Error} - "`Bytes` exceeds `Dest.Size`."
+     * @throws {PropertyError} - "`Dest` must have properties `"Ptr`" and `"Size`"."
      */
     RawRead(Dest, Bytes?) {
         if IsSet(Bytes) {
@@ -966,7 +1884,7 @@ class FileMapping {
                     throw Error('``Bytes`` exceeds ``Dest.Size``.', , Bytes)
                 }
             } else {
-                throw PropertyError('``Data`` must have properties "Ptr" and "Size".')
+                throw PropertyError('``Dest`` must have properties "Ptr" and "Size".')
             }
         }
         this.__Pos += Bytes
@@ -980,7 +1898,258 @@ class FileMapping {
         return Bytes
 	}
     /**
-     * Copies data into the current position of the file mapping object, and advances the file pointer.
+     * @description - Writes data at the file pointer's current position, replacing a number
+     * of characters in the process. The direction in which data is moved depends on the size of
+     * `Data` / the value of `DataSize`, and the value of `Bytes`. The file pointer is moved to the
+     * end of the data that was inserted.
+     *
+     * If the current view is insufficient to receive the entire string, and if the size of the file
+     * mapping object is sufficient to receive the entire string, {@link FileMapping.Prototype.Replace}
+     * closes the current view and opens a view large enough to receive the string, rounded up to the
+     * next page or to the end of the file mapping object, whichever is lesser.
+     *
+     * If the size of the file mapping object is insufficient to receive the entire string, the behavior
+     * of {@link FileMapping.Prototype.Replace} is determined by parameter `AdjustMaxSize`.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * Example with `DataSize > Bytes`:
+     * @example
+     * fm := FileMapping({ MaxSize: 200 })
+     * fm.Open()
+     * str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+     * fm.Write2(&str)
+     * toReplace := "val1"
+     * ; Set file pointer to just befoe "val1".
+     * fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+     * bytes := StrLen(toReplace) * fm.BytesPerChar
+     * replacementStr := "new_val"
+     * replacement := Buffer(StrLen(replacementStr) * fm.BytesPerChar)
+     * StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+     * ; The difference, in bytes, of
+     * ; the data that was written less
+     * ; the data that was overwritten.
+     * ; i.e. `DataSize - Bytes`.
+     * result := fm.RawReplace(replacement, bytes)
+     * OutputDebug(result "`n") ; 6
+     * OutputDebug(fm.Pos "`n") ; 38
+     * fm.Pos := 0
+     * OutputDebug(fm.Read() "`n") ; { "prop1": "new_val", "prop2": "val2" }
+     * fm.Pos := 0
+     * OutputDebug(fm.Read(38 / fm.BytesPerChar) "`n") ; { "prop1": "new_val
+     * @
+     *
+     * Example with `DataSize < Bytes`:
+     * @example
+     * fm := FileMapping({ MaxSize: 200 })
+     * fm.Open()
+     * str := "{ `"prop1`": `"longer_val1`", `"prop2`": `"longer_val2`" }"
+     * fm.Write2(&str)
+     * toReplace := "longer_val1"
+     * ; Set file pointer to just before
+     * ; "longer_val1".
+     * fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+     * bytes := StrLen(toReplace) * fm.BytesPerChar
+     * replacementStr := "new_val"
+     * replacement := Buffer(StrLen(replacementStr) * 2)
+     * StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+     * ; The difference, in bytes, of
+     * ; the data that was written less
+     * ; the data that was overwritten.
+     * ; i.e. `DataSize - Bytes`.
+     * result := fm.RawReplace(replacement, bytes)
+     * OutputDebug(result "`n") ; -8
+     * OutputDebug(fm.Pos "`n") ; 38
+     * fm.Pos := 0
+     * OutputDebug(fm.Read() "`n") ; { "prop1": "new_val", "prop2": "longer_val2" }
+     * fm.Pos := 0
+     * OutputDebug(fm.Read(38 / fm.BytesPerChar) "`n") ; { "prop1": "new_val
+     * @
+     *
+     * Example with `DataSize = Bytes`:
+     * @example
+     * fm := FileMapping({ MaxSize: 200 })
+     * fm.Open()
+     * str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+     * fm.Write2(&str)
+     * toReplace := "val1"
+     * ; Set file pointer to just before "val1".
+     * fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+     * bytes := StrLen(toReplace) * fm.BytesPerChar
+     * replacementStr := "val0"
+     * replacement := Buffer(StrLen(replacementStr) * 2)
+     * StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+     * ; The difference, in bytes, of
+     * ; the data that was written less
+     * ; the data that was overwritten.
+     * ; i.e. `DataSize - Bytes`.
+     * result := fm.RawReplace(replacement, bytes)
+     * OutputDebug(result "`n") ; 0
+     * OutputDebug(fm.Pos "`n") ; 32
+     * fm.Pos := 0
+     * OutputDebug(fm.Read() "`n") ; { "prop1": "val0", "prop2": "val2" }
+     * fm.Pos := 0
+     * OutputDebug(fm.Read(32 / fm.BytesPerChar) "`n") ; { "prop1": "val0
+     * @
+     *
+     * @param {String} Str - The string to insert.
+     *
+     * @param {Integer} [Length] - The maximum number of characters to replace.
+     *
+     * If `Length` is unset, all the data between the file pointer's current position and the end
+     * of the file mapping object is replaced by `Str`.
+     *
+     * If `Length` would exceed the file mapping object's maximum size, it is truncated to the
+     * file mapping object's end.
+     *
+     * If `Length` is greater than the length of `Str`, the behavior of this function is similar to
+     * {@link FileMapping.Prototype.Cut}. `Str` overwrites data beginning from the file pointer's
+     * current position. The remaining characters are overwritten by copying the data that is to
+     * the right of the file pointer's current position + `Length` characters to the end of `Str`.
+     *
+     * If `Length` is less than the length of `Str`, the behavior of this function is similar to
+     * {@link FileMapping.Prototype.Insert}. `Str` overwrites the data beginning from the file pointer's
+     * current position up to `Length` characters. The data that is to the right of the file
+     * pointer's current position + `Length` characters is copied to the right to make room for the
+     * rest of `Str`, such that the end of `Str` is immediately followed by the data that was shifted
+     * right.
+     *
+     * @param {Boolean} [AdjustMaxSize = false] - `AdjustMaxSize` is ignored when `Length`
+     * is greater than the length of `Str`.
+     *
+     * Understand that if the file mapping object is opened in more than one process, you must not
+     * set `AdjustMaxSize` to true unless all other processes call `CloseHandle` to close their handle.
+     *
+     * If true, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the file mapping object is closed and re-opened with a new maximum size to accommodate
+     * the data (the original maximum size is doubled until a sufficient size is reached). A view is
+     * then opened that is sufficient to receive the entire data, rounded up to the next page or to
+     * the end of the file mapping object, whichever is lesser.
+     *
+     * If false, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the data is not copied and the function returns 0.
+     *
+     * @param {Integer} [EndOffset] - `EndOffset` is ignored when `Length` is less than the length of
+     * `Str`.
+     *
+     * If set, `EndOffset` indicates the last byte that will be shifted left by this function. The
+     * offset is relative to the start of the file mapping object. If the current view does not
+     * include `EndOffset` in its range, {@link FileMapping.Prototype.Replace} caches the current
+     * view size and opens a view up to `EndOffset`. After {@link FileMapping.Prototype.Replace}
+     * makes a copy of the target string, it moves the data between the end of the copied string
+     * and `EndOffset` to the file pointer's current position.
+     *
+     * If {@link FileMapping.Prototype.Replace} opened a larger view, it closes the view and opens a view
+     * with the original size.
+     *
+     * If unset, after {@link FileMapping.Prototype.Replace} makes a copy of the target string, it moves
+     * all data that follows the end of the copied string to the file pointer's current position.
+     *
+     * @param {Boolean} [Terminate = false] - `Terminate` is ignored when `Length` is less than the
+     * length of `Str`.
+     *
+     * If true, {@link FileMapping.Prototype.Cut} inserts a null terminator at the end of the data
+     * that was moved.
+     *
+     * @returns {Integer} - The difference, in characters, between the length of `Str` and `Length`.
+     */
+    RawReplace(Data, Bytes, DataSize?, AdjustMaxSize := false, EndOffset?, Terminate := true) {
+        if IsObject(Data) {
+            if HasProp(Data, 'Size') && HasProp(Data, 'Ptr') {
+                if IsSet(DataSize) {
+                    if DataSize > Data.Size {
+                        throw Error('``DataSize`` exceeds ``Data.Size``.', , DataSize)
+                    }
+                } else {
+                    DataSize := Data.Size
+                }
+            } else {
+                throw PropertyError('``Data`` must have properties "Ptr" and "Size".')
+            }
+        } else if !IsSet(DataSize) {
+            throw Error('``DataSize`` must be set when ``Data`` is not an object.')
+        }
+        offset := this.__Pos
+        if DataSize > Bytes {
+            diff := DataSize - Bytes
+            if diff + offset > this.Size {
+                if this.ViewStart + offset + diff > this.MaxSize {
+                    if AdjustMaxSize {
+                        this.AdjustMaxSize(diff)
+                    } else {
+                        return 0
+                    }
+                } else {
+                    this.ExtendView(diff)
+                }
+            }
+            DllCall(
+                g_msvcrt_memmove
+              , 'ptr', this.Ptr + offset + DataSize
+              , 'ptr', this.Ptr + offset + bytes
+              , 'uint', this.Size - offset - diff
+              , 'cdecl'
+            )
+            DllCall(
+                g_msvcrt_memmove
+              , 'ptr', this.Ptr + offset
+              , 'ptr', Data
+              , 'uint', DataSize
+              , 'cdecl'
+            )
+        } else if DataSize < Bytes {
+            if IsSet(EndOffset) {
+                if EndOffset > this.MaxSize {
+                    EndOffset := this.MaxSize
+                }
+            } else {
+                EndOffset := this.MaxSize
+            }
+            if this.ViewEnd < EndOffset {
+                sz := this.Size
+                page := this.Page
+                this.CloseView()
+                this.OpenView(page * FileMapping_VirtualMemoryGranularity, EndOffset - Page * FileMapping_VirtualMemoryGranularity)
+            }
+            DllCall(
+                g_msvcrt_memmove
+              , 'ptr', this.Ptr + offset
+              , 'ptr', Data
+              , 'uint', DataSize
+              , 'cdecl'
+            )
+            pos := offset + DataSize
+            start := offset + Bytes
+            DllCall(
+                g_msvcrt_memmove
+              , 'ptr', this.Ptr + pos
+              , 'ptr', this.Ptr + start
+              , 'uint', EndOffset - start
+              , 'cdecl'
+            )
+            if Terminate {
+                this.TerminateEx(EndOffset + pos - start)
+            }
+            if IsSet(sz) {
+                this.CloseView()
+                this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+            }
+        } else {
+            DllCall(
+                g_msvcrt_memmove
+              , 'ptr', this.Ptr + offset
+              , 'ptr', Data
+              , 'uint', DataSize
+              , 'cdecl'
+            )
+        }
+        this.__Pos += DataSize
+        return DataSize - Bytes
+    }
+    /**
+     * @description - Copies data into the current position of the file mapping object, and advances
+     * the file pointer.
      *
      * If the current view is insufficient to receive the entire data, and if the size of the file
      * mapping object is sufficient to receive the entire data, {@link FileMapping.Prototype.RawWrite}
@@ -996,8 +2165,8 @@ class FileMapping {
      * @param {*} Data - A pointer to the source of the data, or a Buffer containing the data, or an
      * object with properties "Ptr" and "Size".
      *
-     * @param {Integer} [Bytes] - The number of bytes to copy from `Src`. `Bytes` must be less than
-     * or equal to the size of `Src`. `Bytes` can be left unset if `Data` is an object; the "Size"
+     * @param {Integer} [Bytes] - The number of bytes to copy from `Data`. `Bytes` must be less than
+     * or equal to the size of `Data`. `Bytes` can be left unset if `Data` is an object; the "Size"
      * property is used to deterine the size of the data.
      *
      * @param {Boolean} [AdjustMaxSize = false] - Understand that if the file mapping object is opened
@@ -1013,9 +2182,17 @@ class FileMapping {
      * If false, and if performing the write operation would exceed the file mapping object's maximum
      * size, the data is not copied and the function returns 0.
      *
+     * @param {Boolean} [Terminate = false] - If true, {@link FileMapping.Prototype.Write} inserts
+     * a null terminator at the end of the written string. The file pointer will be positioned just
+     * before the null terminator, so the next write operation overwrites the null terminator.
+     *
      * @returns {Integer} - The number of bytes copied.
+     *
+     * @throws {Error} - "`Bytes` exceeds `Data.Size`."
+     * @throws {Error} - "`Data` must have properties `"Ptr`" and `"Size`"."
+     * @throws {Error} - "`Bytes` must be set when `Data` is not an object."
      */
-    RawWrite(Data, Bytes?, AdjustMaxSize := false) {
+    RawWrite(Data, Bytes?, AdjustMaxSize := false, Terminate := false) {
         if IsObject(Data) {
             if HasProp(Data, 'Size') && HasProp(Data, 'Ptr') {
                 if IsSet(Bytes) {
@@ -1032,14 +2209,16 @@ class FileMapping {
             throw Error('``Bytes`` must be set when ``Data`` is not an object.')
         }
         offset := this.__Pos
-        if this.ViewStart + offset + Bytes > this.MaxSize {
-            if AdjustMaxSize {
-                this.AdjustMaxSize(Bytes)
+        if bytes + offset > this.Size {
+            if this.ViewStart + offset + bytes > this.MaxSize {
+                if AdjustMaxSize {
+                    this.AdjustMaxSize(bytes)
+                } else {
+                    return 0
+                }
             } else {
-                return 0
+                this.ExtendView(bytes)
             }
-        } else if Bytes + offset > this.Size {
-            this.ExtendView(Bytes)
         }
         this.__Pos += Bytes
         DllCall(
@@ -1049,6 +2228,9 @@ class FileMapping {
           , 'uint', Bytes
           , 'cdecl'
         )
+        if Terminate {
+            this.Terminate()
+        }
         return Bytes
 	}
     /**
@@ -1074,11 +2256,11 @@ class FileMapping {
             bytes := Length * this.BytesPerChar
             if this.ViewStart + offset + Bytes > this.MaxSize {
                 bytes := this.MaxSize - this.ViewStart - offset
-                Length := bytes / this.BytesPerChar
+                Length := Floor(bytes / this.BytesPerChar)
             }
         } else {
             bytes := this.Size - offset
-            Length := bytes / this.BytesPerChar
+            Length := Floor(bytes / this.BytesPerChar)
         }
         if bytes > this.Size - offset {
             this.ExtendView(bytes)
@@ -1092,9 +2274,12 @@ class FileMapping {
      * at a null terminator, the file pointer will be set to the position after the final character
      * in the string, before the null terminator.
      *
-     * The differences between this and {@link FileMapping.Prototype.Write} are:
+     * The differences between this and {@link FileMapping.Prototype.Read} are:
      * - The string value is returned using a `VarRef` parameter instead of as the return value.
      * - The function returns the number of characters read.
+     *
+     * {@link FileMapping.Prototype.Read2} assigns the string to `OutStr`. If you need the string
+     * to be appended to `OutStr`, call {@link FileMapping.Prototype.Read3}.
      *
      * If the current view is insufficient to read the entire string, {@link FileMapping.Prototype.Read}
      * closes the current view and opens a view large enough to read the string, rounded up to the
@@ -1115,11 +2300,11 @@ class FileMapping {
             bytes := Length * this.BytesPerChar
             if this.ViewStart + offset + Bytes > this.MaxSize {
                 bytes := this.MaxSize - this.ViewStart - offset
-                Length := bytes / this.BytesPerChar
+                Length := Floor(bytes / this.BytesPerChar)
             }
         } else {
             bytes := this.Size - offset
-            Length := bytes / this.BytesPerChar
+            Length := Floor(bytes / this.BytesPerChar)
         }
         if bytes > this.Size - offset {
             this.ExtendView(bytes)
@@ -1127,6 +2312,58 @@ class FileMapping {
         OutStr := StrGet(this.Ptr + offset, Length, this.Encoding)
         this.__Pos += StrLen(OutStr) * this.BytesPerChar
         return StrLen(OutStr)
+    }
+    /**
+     * @description - Reads a string from the view and advances the file pointer. If `StrGet` stops
+     * at a null terminator, the file pointer will be set to the position after the final character
+     * in the string, before the null terminator.
+     *
+     * The differences between this and {@link FileMapping.Prototype.Read} are:
+     * - The string value is returned using a `VarRef` parameter instead of as the return value.
+     * - The function returns the number of characters read.
+     *
+     * {@link FileMapping.Prototype.Read3} (this method) appends the string to `OutStr`.
+     *
+     * {@link FileMapping.Prototype.Read2} assigns the string value to `OutStr`.
+     *
+     * If the current view is insufficient to read the entire string, {@link FileMapping.Prototype.Read}
+     * closes the current view and opens a view large enough to read the string, rounded up to the
+     * next page or to the end of the file mapping object, whichever is lesser.
+     *
+     * @param {VarRef} OutStr - The string will be appended to this variable.
+     *
+     * @param {Integer} [Length] - The maximum number of characters to read. If unset, the remainder
+     * of the view is read. `StrGet` automatically ends the string at the first binary zero. If
+     * the magnitude of `Length` exceeds the available content, {@link FileMapping.Prototype.Read}
+     * stops reading at the end of the current view (or at the first binary zero).
+     *
+     * @returns {Integer} - The number of characters read.
+     */
+    Read3(&OutStr, Length?) {
+        offset := this.__Pos
+        if IsSet(Length) {
+            bytes := Length * this.BytesPerChar
+            if this.ViewStart + offset + Bytes > this.MaxSize {
+                bytes := this.MaxSize - this.ViewStart - offset
+                Length := Floor(bytes / this.BytesPerChar)
+            }
+        } else {
+            bytes := this.Size - offset
+            Length := Floor(bytes / this.BytesPerChar)
+        }
+        if bytes > this.Size - offset {
+            this.ExtendView(bytes)
+        }
+        if IsSet(OutStr) {
+            len := StrLen(OutStr)
+        } else {
+            len := 0
+            OutStr := ''
+        }
+        OutStr .= StrGet(this.Ptr + offset, Length, this.Encoding)
+        chars := StrLen(OutStr) - len
+        this.__Pos += chars * this.BytesPerChar
+        return chars
     }
     /**
      * @description -  Your code must not call {@link FileMapping.Prototype.Reload} if the file
@@ -1345,6 +2582,215 @@ class FileMapping {
         }
     }
     /**
+     * @description - Writes a string at the file pointer's current position, replacing a number
+     * of characters in the process. The direction in which data is moved depends on the length
+     * of `Str` relative to `Length`. The file pointer is moved to the end of the string that was
+     * inserted.
+     *
+     * If the current view is insufficient to receive the entire string, and if the size of the file
+     * mapping object is sufficient to receive the entire string, {@link FileMapping.Prototype.Replace}
+     * closes the current view and opens a view large enough to receive the string, rounded up to the
+     * next page or to the end of the file mapping object, whichever is lesser.
+     *
+     * If the size of the file mapping object is insufficient to receive the entire string, the behavior
+     * of {@link FileMapping.Prototype.Replace} is determined by parameter `AdjustMaxSize`.
+     *
+     * Remember that, if the file mapping object is backed by a file, you must call
+     * {@link FileMapping.Prototype.Flush} to write the changes to the file on disk.
+     *
+     * Example with `StrLen(Str) > Length`:
+     * @example
+     * fm := FileMapping({ MaxSize: 200 })
+     * fm.Open()
+     * str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+     * fm.Write2(&str)
+     * toReplace := "val1"
+     * fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+     * len := StrLen(toReplace)
+     * replacement := "new_val"
+     * result := fm.Replace(replacement, len)
+     * ; The difference, in bytes, of
+     * ; the data that was written less
+     * ; the data that was overwritten.
+     * ; i.e. `(StrLen(Str) - Length) * fm.BytesPerChar`.
+     * OutputDebug(result "`n") ; 6
+     * OutputDebug(fm.Pos "`n") ; 38
+     * fm.Pos := 0
+     * OutputDebug(fm.Read() "`n") ; { "prop1": "new_val", "prop2": "val2" }
+     * fm.Pos := 0
+     * OutputDebug(fm.Read(38 / fm.BytesPerChar) "`n") ; { "prop1": "new_val
+     * @
+     *
+     * Example with `StrLen(Str) < Length`:
+     * @example
+     * fm := FileMapping({ MaxSize: 200 })
+     * fm.Open()
+     * str := "{ `"prop1`": `"longer_val1`", `"prop2`": `"longer_val2`" }"
+     * fm.Write2(&str)
+     * toReplace := "longer_val1"
+     * fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+     * len := StrLen(toReplace)
+     * replacement := "new_val"
+     * result := fm.Replace(replacement, len)
+     * ; The difference, in bytes, of
+     * ; the data that was written less
+     * ; the data that was overwritten.
+     * ; i.e. `(StrLen(Str) - Length) * fm.BytesPerChar`.
+     * OutputDebug(result "`n") ; -8
+     * OutputDebug(fm.Pos "`n") ; 38
+     * fm.Pos := 0
+     * OutputDebug(fm.Read() "`n") ; { "prop1": "new_val", "prop2": "longer_val2" }
+     * fm.Pos := 0
+     * OutputDebug(fm.Read(38 / fm.BytesPerChar) "`n") ; { "prop1": "new_val
+     * @
+     *
+     * Example with `StrLen(Str) = Length`:
+     * @example
+     * fm := FileMapping({ MaxSize: 200 })
+     * fm.Open()
+     * str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+     * fm.Write2(&str)
+     * toReplace := "val1"
+     * fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+     * len := StrLen(toReplace)
+     * replacement := "val0"
+     * result := fm.Replace(replacement, len)
+     * ; The difference, in bytes, of
+     * ; the data that was written less
+     * ; the data that was overwritten.
+     * ; i.e. `(StrLen(Str) - Length) * fm.BytesPerChar`.
+     * OutputDebug(result "`n") ; 0
+     * OutputDebug(fm.Pos "`n") ; 32
+     * fm.Pos := 0
+     * OutputDebug(fm.Read() "`n") ; { "prop1": "val0", "prop2": "val2" }
+     * fm.Pos := 0
+     * OutputDebug(fm.Read(32 / fm.BytesPerChar) "`n") ; { "prop1": "val0
+     * @
+     *
+     * @param {String} Str - The string to insert.
+     *
+     * @param {Integer} [Length] - The maximum number of characters to replace.
+     *
+     * If `Length` is unset, all the data between the file pointer's current position and the end
+     * of the file mapping object is replaced by `Str`.
+     *
+     * If `Length` would exceed the file mapping object's maximum size, it is truncated to the
+     * file mapping object's end.
+     *
+     * If `Length` is greater than the length of `Str`, the behavior of this function is similar to
+     * {@link FileMapping.Prototype.Cut}. `Str` overwrites data beginning from the file pointer's
+     * current position. The remaining characters are overwritten by copying the data that is to
+     * the right of the file pointer's current position + `Length` characters to the end of `Str`.
+     *
+     * If `Length` is less than the length of `Str`, the behavior of this function is similar to
+     * {@link FileMapping.Prototype.Insert}. `Str` overwrites the data beginning from the file pointer's
+     * current position up to `Length` characters. The data that is to the right of the file
+     * pointer's current position + `Length` characters is copied to the right to make room for the
+     * rest of `Str`, such that the end of `Str` is immediately followed by the data that was shifted
+     * right.
+     *
+     * @param {Boolean} [AdjustMaxSize = false] - `AdjustMaxSize` is ignored when `Length`
+     * is greater than the length of `Str`.
+     *
+     * Understand that if the file mapping object is opened in more than one process, you must not
+     * set `AdjustMaxSize` to true unless all other processes call `CloseHandle` to close their handle.
+     *
+     * If true, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the file mapping object is closed and re-opened with a new maximum size to accommodate
+     * the data (the original maximum size is doubled until a sufficient size is reached). A view is
+     * then opened that is sufficient to receive the entire data, rounded up to the next page or to
+     * the end of the file mapping object, whichever is lesser.
+     *
+     * If false, and if performing the write operation would exceed the file mapping object's maximum
+     * size, the data is not copied and the function returns 0.
+     *
+     * @param {Integer} [EndOffset] - `EndOffset` is ignored when `Length` is less than the length of
+     * `Str`.
+     *
+     * If set, `EndOffset` indicates the last byte that will be shifted left by this function. The
+     * offset is relative to the start of the file mapping object. If the current view does not
+     * include `EndOffset` in its range, {@link FileMapping.Prototype.Replace} caches the current
+     * view size and opens a view up to `EndOffset`. After {@link FileMapping.Prototype.Replace}
+     * makes a copy of the target string, it moves the data between the end of the copied string
+     * and `EndOffset` to the file pointer's current position.
+     *
+     * If {@link FileMapping.Prototype.Replace} opened a larger view, it closes the view and opens a view
+     * with the original size.
+     *
+     * If unset, after {@link FileMapping.Prototype.Replace} makes a copy of the target string, it moves
+     * all data that follows the end of the copied string to the file pointer's current position.
+     *
+     * @param {Boolean} [Terminate = false] - `Terminate` is ignored when `Length` is less than the
+     * length of `Str`.
+     *
+     * If true, {@link FileMapping.Prototype.Cut} inserts a null terminator at the end of the data
+     * that was moved.
+     *
+     * @returns {Integer} - The difference, in characters, between the length of `Str` and `Length`.
+     */
+    Replace(Str, Length, AdjustMaxSize := false, EndOffset?, Terminate := true) {
+        offset := this.__Pos
+        if StrLen(Str) > Length {
+            strBytes := StrLen(Str) * this.BytesPerChar
+            lenBytes := Length * this.BytesPerChar
+            diff := strBytes - lenBytes
+            if diff + offset > this.Size {
+                if this.ViewStart + offset + diff > this.MaxSize {
+                    if AdjustMaxSize {
+                        this.AdjustMaxSize(diff)
+                    } else {
+                        return 0
+                    }
+                } else {
+                    this.ExtendView(diff)
+                }
+            }
+            DllCall(
+                g_msvcrt_memmove
+              , 'ptr', this.Ptr + offset + strBytes
+              , 'ptr', this.Ptr + offset + lenBytes
+              , 'uint', this.Size - offset - diff
+              , 'cdecl'
+            )
+            StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        } else if StrLen(Str) < Length {
+            if IsSet(EndOffset) {
+                if EndOffset > this.MaxSize {
+                    EndOffset := this.MaxSize
+                }
+            } else {
+                EndOffset := this.MaxSize
+            }
+            if this.ViewEnd < EndOffset {
+                sz := this.Size
+                page := this.Page
+                this.CloseView()
+                this.OpenView(page * FileMapping_VirtualMemoryGranularity, EndOffset - Page * FileMapping_VirtualMemoryGranularity)
+            }
+            StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+            pos := offset + StrLen(Str) * this.BytesPerChar
+            start := offset + Length * this.BytesPerChar
+            DllCall(
+                g_msvcrt_memmove
+              , 'ptr', this.Ptr + pos
+              , 'ptr', this.Ptr + start
+              , 'uint', EndOffset - start
+              , 'cdecl'
+            )
+            if Terminate {
+                this.TerminateEx(EndOffset + pos - start)
+            }
+            if IsSet(sz) {
+                this.CloseView()
+                this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+            }
+        } else {
+            StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        }
+        this.__Pos += StrLen(Str) * this.BytesPerChar
+        return StrLen(Str) - Length
+    }
+    /**
      * @description - Moves the file pointer. This has similar behavior as the AHK native
      * `File.Seek`, except instead of moving the file pointer relative to the start / end of a file,
      * it moves the file pointer relative to the start / end of the current view.
@@ -1400,7 +2846,7 @@ class FileMapping {
     }
     SetEncoding(Encoding) {
         this.Options.Encoding := Encoding
-        this.BytesPerChar := StrPut('A', Encoding) / 2
+        this.BytesPerChar := Integer(StrPut('A', Encoding) / 2)
     }
     /**
      * Sets the quantity of pages that are mapped during each iteration when processing the enumerator
@@ -1499,15 +2945,19 @@ class FileMapping {
         OnExit(this.OnExit, AddRemove)
     }
     /**
-     * @description - Writes a null terminator at the current position, and advances the file
-     * pointer. If performing the write operation would extend beyond the end of the file mapping
-     * object, the function does not write the null terminator and returns 0. If the current position
-     * is at the end of the current view, a new view is opened to accommodate the extra bytes. The
-     * new view will start at the same page as the current view, and will end at the next page rounded
-     * up from the current size + the size of one character.
+     * @description - Writes a null terminator at the current position. This does not advance the
+     * file pointer. If the current position is at the end of the current view, a new view is opened
+     * to accommodate the write operation. The new view will begin at the same page as the current view
+     * and will include one additional page, or will stop at the end of the file mapping object,
+     * whichever is lesser.
+     *
+     * If performing the write operation would extend beyond the end of the file mapping object,
+     * the function fails and returns 0.
      *
      * @returns {Integer} - If successful, the return value from `NumPut`, which is the address of
      * the next byte after the value that was just written. If unsuccessful, 0.
+     *
+     * @throws {Error} - "The operation requires an active view.".
      */
     Terminate() {
         if !this.Size {
@@ -1520,11 +2970,52 @@ class FileMapping {
             }
             this.ExtendView(this.BytesPerChar)
         }
-        this.__Pos += this.BytesPerChar
         if this.BytesPerChar = 1 {
             return NumPut('uchar', 0, this.Ptr + offset)
         } else {
             return NumPut('ushort', 0, this.Ptr + offset)
+        }
+    }
+    /**
+     * @description - Writes a null terminator at the indicated position.
+     *
+     * @param {Integer} Offset - The byte offset from the start of the file mapping object at which
+     * to write the null terminator. `Offset` must be less than {@link FileMapping.Prototype.MaxSize}.
+     * If `Offset` is greater than the end of the current view, {@link FileMapping.Prototype.TerminateEx}
+     * caches the current view's page and size, opens a larger view, writes the null terminator,
+     * closes the view and reopens a view to the original page and size.
+     *
+     * @returns {Integer} - If successful, the return value from `NumPut`, which is the address of
+     * the next byte after the value that was just written. If unsuccessful, 0.
+     *
+     * @throws {Error} - "The operation requires an active view.".
+     * @throws {Error} - "`Offset` must be less than the file mapping object`s maximum size."
+     */
+    TerminateEx(Offset) {
+        if !this.Size {
+            throw Error('The operation requires an active view.', , A_ThisFunc)
+        }
+        if Offset > this.ViewEnd {
+            if Offset >= this.MaxSize {
+                throw Error('``Offset`` must be less than the file mapping object`'s maximum size.', , Offset)
+            }
+            sz := this.Size
+            page := this.Page
+            this.ExtendView(Offset - this.__Pos - this.ViewStart + this.BytesPerChar)
+            if this.BytesPerChar = 1 {
+                ptr := NumPut('uchar', 0, this.Ptr + Offset)
+            } else {
+                ptr := NumPut('ushort', 0, this.Ptr + Offset)
+            }
+            if IsSet(sz) {
+                this.CloseView()
+                this.OpenView(page * FileMapping_VirtualMemoryGranularity, sz)
+            }
+            return ptr
+        } else if this.BytesPerChar = 1 {
+            return NumPut('uchar', 0, this.Ptr + Offset)
+        } else {
+            return NumPut('ushort', 0, this.Ptr + Offset)
         }
     }
     /**
@@ -1592,9 +3083,6 @@ class FileMapping {
      * @description - Writes a string to the current position of the file mapping object, and advances
      * the file pointer.
      *
-     * This never writes a null terminator. Call {@link FileMapping.Prototype.Terminate} to add a
-     * null terminator.
-     *
      * If the current view is insufficient to receive the entire string, and if the size of the file
      * mapping object is sufficient to receive the entire string, {@link FileMapping.Prototype.Write}
      * closes the current view and opens a view large enough to receive the string, rounded up to the
@@ -1621,22 +3109,32 @@ class FileMapping {
      * If false, and if performing the write operation would exceed the file mapping object's maximum
      * size, the data is not copied and the function returns 0.
      *
+     * @param {Boolean} [Terminate = false] - If true, {@link FileMapping.Prototype.Write} inserts
+     * a null terminator at the end of the written string. The file pointer will be positioned just
+     * before the null terminator, so the next write operation overwrites the null terminator.
+     *
      * @returns {Integer} - The number of bytes copied.
      */
-    Write(Str, AdjustMaxSize := false) {
+    Write(Str, AdjustMaxSize := false, Terminate := false) {
         offset := this.__Pos
         bytes := StrLen(Str) * this.BytesPerChar
-        if this.ViewStart + offset + bytes > this.MaxSize {
-            if AdjustMaxSize {
-                this.AdjustMaxSize(bytes)
+        if bytes + offset > this.Size {
+            if this.ViewStart + offset + bytes > this.MaxSize {
+                if AdjustMaxSize {
+                    this.AdjustMaxSize(bytes)
+                } else {
+                    return 0
+                }
             } else {
-                return 0
+                this.ExtendView(bytes)
             }
-        } else if bytes + offset > this.Size {
-            this.ExtendView(bytes)
         }
         this.__Pos += bytes
-        return StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        if Terminate {
+            return StrPut(Str, this.Ptr + offset, this.Encoding)
+        } else {
+            return StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        }
 	}
     /**
      * @description - Writes a string to the current position of the file mapping object, and advances
@@ -1674,22 +3172,32 @@ class FileMapping {
      * If false, and if performing the write operation would exceed the file mapping object's maximum
      * size, the data is not copied and the function returns 0.
      *
+     * @param {Boolean} [Terminate = false] - If true, {@link FileMapping.Prototype.Write} inserts
+     * a null terminator at the end of the written string. The file pointer will be positioned just
+     * before the null terminator, so the next write operation overwrites the null terminator.
+     *
      * @returns {Integer} - The number of bytes copied.
      */
-    Write2(&Str, AdjustMaxSize := false) {
+    Write2(&Str, AdjustMaxSize := false, Terminate := false) {
         offset := this.__Pos
         bytes := StrLen(Str) * this.BytesPerChar
-        if this.ViewStart + offset + bytes > this.MaxSize {
-            if AdjustMaxSize {
-                this.AdjustMaxSize(bytes)
+        if bytes + offset > this.Size {
+            if this.ViewStart + offset + bytes > this.MaxSize {
+                if AdjustMaxSize {
+                    this.AdjustMaxSize(bytes)
+                } else {
+                    return 0
+                }
             } else {
-                return 0
+                this.ExtendView(bytes)
             }
-        } else if bytes + offset > this.Size {
-            this.ExtendView(bytes)
         }
         this.__Pos += bytes
-        return StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        if Terminate {
+            return StrPut(Str, this.Ptr + offset, this.Encoding)
+        } else {
+            return StrPut(Str, this.Ptr + offset, StrLen(Str), this.Encoding)
+        }
 	}
     __Delete() {
         this.Close()
@@ -1815,14 +3323,14 @@ class FileMapping {
      * @instance
      * @type {Integer}
      */
-    dwMaximumSizeHigh => this.Options.MaxSize >> 32
+    dwMaximumSizeHigh => Integer(this.Options.MaxSize) >> 32
     /**
      * Returns the low word of `Options.MaxSize`.
      * @member {FileMapping}
      * @instance
      * @type {Integer}
      */
-    dwMaximumSizeLow => this.Options.MaxSize & 0xFFFFFFFF
+    dwMaximumSizeLow => Integer(this.Options.MaxSize) & 0xFFFFFFFF
     /**
      * Gets or sets the `dwShareMode` value passed to `CreateFileW` when
      * {@link FileMapping.Prototype.OpenFile} is called. If your code sets the value, and if a file
@@ -2149,10 +3657,17 @@ class FileMapping {
                 this.EnumPageCount := 1
             }
             this.Page := -this.EnumPageCount
+            this.OriginalPage := fileMappingObj.Page
+            this.OriginalSize := fileMappingObj.Size
+            this.OriginalPos := fileMappingObj.__Pos
             fileMappingObj.CloseView()
         }
         Call(&Page?, &ByteOffset?, &ByteLength?, &IsLastIteration?) {
             if this.Flag_Complete {
+                fm := this.FileMapping
+                fm.CloseView()
+                fm.OpenView(this.OriginalPage * FileMapping_VirtualMemoryGranularity, this.OriginalSize)
+                fm.Pos := this.OriginalPos
                 return 0
             }
             this.Page += this.EnumPageCount
@@ -2382,7 +3897,9 @@ FileMapping_SetConstants(force := false) {
         return
     }
 
-    g_msvcrt_memmove := DllCall('GetProcAddress', 'ptr', DllCall('GetModuleHandleW', 'wstr', 'msvcrt', 'ptr'), 'astr', 'memmove', 'ptr')
+    local hMod := DllCall('GetModuleHandleW', 'wstr', 'msvcrt', 'ptr')
+    g_msvcrt_memmove := DllCall('GetProcAddress', 'ptr', hMod, 'astr', 'memmove', 'ptr')
+    g_msvcrt_wmemchr := DllCall('GetProcAddress', 'ptr', hMod, 'astr', 'wmemchr', 'ptr')
     local hMod := DllCall('GetModuleHandleW', 'wstr', 'kernel32', 'ptr')
     g_kernel32_CloseHandle := DllCall('GetProcAddress', 'ptr', hMod, 'astr', 'CloseHandle', 'ptr')
     g_kernel32_CreateFileMappingW := DllCall('GetProcAddress', 'ptr', hMod, 'astr', 'CreateFileMappingW', 'ptr')

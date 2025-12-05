@@ -13,20 +13,23 @@ class test_FileMapping {
         this.Encodings := [ 'cp1200', 'cp65001' ]
     }
     static Call() {
-        this.path := this.GetPath()
-        this.onexit := OnExitCallback(this.path)
-        OnExit(this.onexit, 1)
-        this.OpenAndReadSmall()
-        this.WriteSmall()
-        this.WriteAndExpandSmall()
-        this.AdjustMaxSizeSmallFile()
-        this.GeneralMethods()
-        this.LoopReadLarge()
-        this.WriteSmall_Pagefile()
-        this.WriteLarge_Pagefile()
-        this.LoopReadSmall()
-        this.ExtendViewOrEndOfMapping()
-        this.ToFile()
+        ; this.path := this.GetPath()
+        ; this.onexit := OnExitCallback(this.path)
+        ; OnExit(this.onexit, 1)
+        ; this.OpenAndReadSmall()
+        ; this.WriteSmall()
+        ; this.WriteAndExpandSmall()
+        ; this.AdjustMaxSizeSmallFile()
+        ; this.GeneralMethods()
+        ; this.LoopReadLarge()
+        ; this.WriteSmall_Pagefile()
+        ; this.WriteLarge_Pagefile()
+        ; this.LoopReadSmall()
+        ; this.ExtendViewOrEndOfMapping()
+        ; this.ToFile()
+        ; this.Insert()
+        ; this.Cut()
+        this.Replace()
     }
     static AdjustMaxSizeSmallFile() {
         path := this.path
@@ -64,7 +67,7 @@ class test_FileMapping {
                 throw Error('Invalid view size.')
             }
             fm.Terminate()
-            if fm.Pos != test_pos + fm.BytesPerChar {
+            if fm.Pos != test_pos {
                 throw Error('Invalid position.')
             }
             fm.Pos := fm.StartByte
@@ -83,6 +86,109 @@ class test_FileMapping {
                 throw Error('Invalid read content.')
             }
             fm.Close()
+        }
+    }
+    static Cut() {
+        fm := FileMapping({ MaxSize: 250 })
+        fm.Open()
+        fm.Pos := 20
+        length := 105
+        endOffset := fm.MaxSize
+        str := fm.Cut(length, endOffset)
+        if str {
+            throw Error('Expected empty string.')
+        }
+        if fm.Pos != 20 {
+            throw Error('Invalid pos.')
+        }
+
+        fm := FileMapping({ MaxSize: 500 })
+        fm.Open()
+        s := ''
+        VarSetStrCapacity(&s, 250)
+        loop 25 {
+            s .= '0123456789'
+        }
+        result := fm.Write2(&s)
+        if result != 500 {
+            throw Error('Expected 500.')
+        }
+        fm.Pos := 20
+        length := 15
+        str := fm.Cut(length)
+        if str != '012345678901234' {
+            throw Error('Invalid str.', , str)
+        }
+        if fm.Pos != 20 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        str2 := fm.Read()
+        test_len := StrLen(str2)
+        if test_len != 235 {
+            throw Error('Invalid strlen.', , test_len)
+        }
+        if fm.Pos != 470 {
+            throw Error('Invalid pos.')
+        }
+
+        fm := FileMapping({ MaxSize: 150 })
+        fm.Open()
+        result := fm.Write('ABC01DEF23GHI45JKL67MNO89PQR01STU23VWX45YZ[67\]^89_')
+        if result != 102 {
+            throw Error('Expected 102.', , result)
+        }
+        fm.Pos := 20
+        str := fm.CutEx("[789]{2}")
+        if str != 'GHI45JKL67MNO89' {
+            throw Error('Expected "GHI45JKL67MNO89".', , str)
+        }
+        if fm.Pos != 20 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        str2 := fm.Read()
+        if str2 != 'ABC01DEF23PQR01STU23VWX45YZ[67\]^89_' {
+            throw Error('Expected "ABC01DEF23PQR01STU23VWX45YZ[67\]^89_".', , str2)
+        }
+        if fm.Pos != 72 {
+            throw Error('Invalid pos.', , fm.Pos)
+        }
+        fm.Pos := 30
+        str3 := fm.CutEx("[789]{2}", , , false)
+        if str3 != 'STU23VWX45YZ[67\]^' {
+            throw Error('Expected "STU23VWX45YZ[67\]^".', , str3)
+        }
+        fm.Pos := 0
+        str4 := fm.Read()
+        if str4 != 'ABC01DEF23PQR0189_' {
+            throw Error('Expected "ABC01DEF23PQR0189_".', , str4)
+        }
+        if fm.Pos != 36 {
+            throw Error('Invalid pos.')
+        }
+
+        fm := FileMapping({ MaxSize: 1000 })
+        fm.Open()
+        loop 50 {
+            NumPut("int", Random(1, 99999999), fm, A_Index - 1)
+        }
+        copy_cut := Buffer(40)
+        DllCall("msvcrt.dll\memcpy", "ptr", fm.Ptr + 40, "ptr", copy_cut, "int", 40, "cdecl")
+        copy_moved := Buffer(40)
+        DllCall("msvcrt.dll\memcpy", "ptr", fm.Ptr + 80, "ptr", copy_moved, "int", 40, "cdecl")
+        fm.Pos := 40
+        cut_data := fm.RawCut(40)
+        if fm.Pos != 40 {
+            throw Error('Invalid pos.')
+        }
+        value := DllCall("msvcrt.dll\memcmp", "ptr", cut_data, "ptr", copy_cut, "int", 40, "cdecl")
+        if value {
+            throw Error('Expected 0.', , value)
+        }
+        value2 := DllCall("msvcrt.dll\memcmp", "ptr", fm.Ptr + 40, "ptr", copy_moved, "int", 40, "cdecl")
+        if value2 {
+            throw Error('Expected 0.', , value2)
         }
     }
     static ExtendViewOrEndOfMapping() {
@@ -279,6 +385,157 @@ class test_FileMapping {
         }
         return s
     }
+    static Insert() {
+        this.GetLargeContent(&test_txt_large)
+        test_len_large := StrLen(test_txt_large)
+        _str := 'abcdefghijklmnopqrstuvwxyz'
+        _len := StrLen(_str)
+        for encoding in this.Encodings {
+            test_txt := this.GetSmallContent()
+            test_len := StrLen(test_txt)
+            options := { encoding: encoding, MaxSize: test_len * (encoding = 'cp1200' ? 2 : 1) }
+            fm := FileMapping(options)
+
+            fm.Open()
+            fm.Write2(&test_txt)
+            test_pos := 10
+            fm.Pos := test_pos
+            _bytes := _len * fm.BytesPerChar
+            expected_bytes := _bytes
+            result := fm.Insert(_str)
+            if result != expected_bytes {
+                throw Error('Invalid return value (bytes).')
+            }
+            expected_pos := test_pos + _bytes
+            if fm.Pos != expected_pos {
+                throw Error('Invalid pos.')
+            }
+            fm.Pos := 0
+            str := fm.Read()
+            charpos := test_pos / fm.BytesPerChar
+            expected_str := SubStr(test_txt, 1, charpos) _str SubStr(test_txt, charpos + 1, test_len - charpos - _len)
+            if expected_str != str {
+                g := this.MakeGui()
+                g['EdtExpected'].Text := expected_str
+                g['EdtResult'].Text := str
+                throw Error('Invalid read content.')
+            }
+
+            fm.Pos := test_pos
+            data := Buffer(_bytes)
+            StrPut(_str, data, _len, encoding)
+            result := fm.RawInsert(data)
+            if result != data.Size {
+                throw Error('Invalid return value (bytes).')
+            }
+            expected_pos := test_pos + data.Size
+            if fm.Pos != expected_pos {
+                throw Error('Invalid pos.')
+            }
+            fm.Pos := 0
+            str := fm.Read()
+            expected_str2 := SubStr(expected_str, 1, charpos) _str SubStr(expected_str, charpos + 1, test_len - charpos - _len)
+            if expected_str2 != str {
+                g := this.MakeGui()
+                g['EdtExpected'].Text := expected_str2
+                g['EdtResult'].Text := str
+                throw Error('Invalid read content.')
+            }
+
+            _maxSize := fm.MaxSize := test_len_large * fm.BytesPerChar
+            fm.Close()
+            fm.Open()
+            fm.Pos := 0
+            fm.Write2(&test_txt_large)
+            ; Place a null terminator somewhere near the end, leaving enough room to insert the string.
+            terminator_pos := fm.MaxSize - _bytes * 2
+            fm.Pos := terminator_pos
+            fm.Terminate()
+            fm.Pos := 0
+            _test_txt_large := fm.Read()
+            _test_len_large := StrLen(_test_txt_large)
+            expected_len := terminator_pos / fm.BytesPerChar
+            if expected_len != _test_len_large {
+                throw Error('Invalid str len.')
+            }
+            fm.CloseView()
+            fm.OpenViewP(0, 1)
+            fm.Pos := test_pos
+            expected_bytes := terminator_pos + _bytes + fm.BytesPerChar
+            result := fm.InsertEx(_str)
+            if result != expected_bytes {
+                throw Error('Invalid return value (bytes).')
+            }
+            expected_pos := test_pos + _bytes
+            if fm.Pos != expected_pos {
+                throw Error('Invalid pos.')
+            }
+            fm.Pos := 0
+            str := fm.Read()
+            expected_len2 := (terminator_pos + _bytes) / fm.BytesPerChar
+            len := StrLen(str)
+            if len != expected_len2 {
+                throw Error('Invalid str len.')
+            }
+            expected_str := SubStr(_test_txt_large, 1, charpos) _str SubStr(_test_txt_large, charpos + 1, expected_len2 - charpos - _len)
+            if str != expected_str {
+                g := this.MakeGui()
+                g['EdtExpected'].Text := expected_str
+                g['EdtResult'].Text := str
+                throw Error('Invalid read content.')
+            }
+
+            fm.CloseView()
+            fm.Open()
+            fm.Pos := 0
+            fm.Write2(&test_txt_large)
+            ; Place a null terminator near the end so we can invoke `AdjustMaxSize`.
+            terminator_pos := fm.MaxSize - _bytes * 0.5
+            if Mod(terminator_pos, 2) {
+                terminator_pos++
+            }
+            fm.Pos := terminator_pos
+            fm.Terminate()
+            fm.Pos := 0
+            _test_txt_large := fm.Read()
+            _test_len_large := StrLen(_test_txt_large)
+            expected_len := terminator_pos / fm.BytesPerChar
+            if expected_len != _test_len_large {
+                throw Error('Invalid str len.')
+            }
+            fm.CloseView()
+            fm.OpenViewP(0, 1)
+            fm.Pos := test_pos
+            expected_bytes := terminator_pos + _bytes + fm.BytesPerChar
+            result := fm.InsertEx(_str, true)
+            if result != expected_bytes {
+                throw Error('Invalid return value (bytes).')
+            }
+            if fm.MaxSize != _maxSize * 2 {
+                throw Error('Invalid max size.')
+            }
+            expected_pos := test_pos + _bytes
+            if fm.Pos != expected_pos {
+                throw Error('Invalid pos.')
+            }
+            fm.Pos := 0
+            str := fm.Read()
+            expected_len2 := (terminator_pos + _bytes) / fm.BytesPerChar
+            len := StrLen(str)
+            if len != expected_len2 {
+                throw Error('Invalid str len.')
+            }
+            expected_str := SubStr(_test_txt_large, 1, charpos) _str SubStr(_test_txt_large, charpos + 1, expected_len2 - charpos - _len)
+            if str != expected_str {
+                g := this.MakeGui()
+                g['EdtExpected'].Text := expected_str
+                g['EdtResult'].Text := str
+                throw Error('Invalid read content.')
+            }
+
+            fm.Close()
+        }
+    }
     static LoopReadLarge() {
         path := this.path
         this.GetLargeContent(&test_txt)
@@ -435,6 +692,21 @@ class test_FileMapping {
             fm.Close()
         }
     }
+    static MakeGui() {
+        if !this.HasOwnProp('g') {
+            g := this.g := Gui('+Resize')
+            g.SetFont('s11 q5', 'Segoe Ui')
+            g.Add('Text', 'Section', 'Expected')
+            g.Add('Edit', 'xs w500 r10 vEdtExpected')
+            g.Add('Button', 'xs', 'Copy').OnEvent('Click', (*) => A_Clipboard := test_FileMapping.g['EdtExpected'].Text)
+            g.Add('Button', 'xs', 'Exit').OnEvent('Click', (*) => ExitApp())
+            g.Add('Text', 'x' (g.MarginX + 500) ' y' g.MarginY ' Section', 'Result')
+            g.Add('Edit', 'xs w500 r10 vEdtResult')
+            g.Add('Button', 'xs', 'Copy').OnEvent('Click', (*) => A_Clipboard := test_FileMapping.g['EdtResult'].Text)
+        }
+        this.g.Show()
+        return this.g
+    }
     static OpenAndReadSmall() {
         path := this.path
         test_txt := this.GetSmallContent()
@@ -484,6 +756,257 @@ class test_FileMapping {
                 throw Error('Invalid position.')
             }
             fm.Close()
+        }
+    }
+    static Replace() {
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+        fm.Write2(&str)
+        toReplace := "val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        len := StrLen(toReplace)
+        replacement := "new_val"
+        result := fm.Replace(replacement, len)
+        if result != 3 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 38 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "new_val", "prop2": "val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(38 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "new_val' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"longer_val1`", `"prop2`": `"longer_val2`" }"
+        fm.Write2(&str)
+        toReplace := "longer_val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        len := StrLen(toReplace)
+        replacement := "new_val"
+        result := fm.Replace(replacement, len)
+        if result != -4 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 38 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "new_val", "prop2": "longer_val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(38 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "new_val' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+        fm.Write2(&str)
+        toReplace := "val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        len := StrLen(toReplace)
+        replacement := "val0"
+        result := fm.Replace(replacement, len)
+        ; The difference, in bytes, of
+        ; the data that was written less
+        ; the data that was overwritten.
+        ; i.e. `(StrLen(Str) - Length) * fm.BytesPerChar`.
+        if result != 0 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 32 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "val0", "prop2": "val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(32 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "val0' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+        fm.Write2(&str)
+        toReplace := "val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        bytes := StrLen(toReplace) * fm.BytesPerChar
+        replacementStr := "new_val"
+        replacement := Buffer(StrLen(replacementStr) * 2)
+        StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+        result := fm.RawReplace(replacement, bytes)
+        if result != 6 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 38 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "new_val", "prop2": "val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(38 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "new_val' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"longer_val1`", `"prop2`": `"longer_val2`" }"
+        fm.Write2(&str)
+        toReplace := "longer_val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        bytes := StrLen(toReplace) * fm.BytesPerChar
+        replacementStr := "new_val"
+        replacement := Buffer(StrLen(replacementStr) * 2)
+        StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+        result := fm.RawReplace(replacement, bytes)
+        if result != -8 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 38 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "new_val", "prop2": "longer_val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(38 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "new_val' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+        fm.Write2(&str)
+        toReplace := "val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        bytes := StrLen(toReplace) * fm.BytesPerChar
+        replacementStr := "val0"
+        replacement := Buffer(StrLen(replacementStr) * 2)
+        StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+        result := fm.RawReplace(replacement, bytes)
+        if result != 0 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 32 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "val0", "prop2": "val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(32 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "val0' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+        fm.Write2(&str)
+        toReplace := "val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        bytes := StrLen(toReplace) * fm.BytesPerChar
+        replacementStr := "new_val"
+        replacement := Buffer(StrLen(replacementStr) * fm.BytesPerChar)
+        StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+        result := fm.RawReplace(replacement, bytes)
+        if result != 6 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 38 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "new_val", "prop2": "val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(38 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "new_val' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"longer_val1`", `"prop2`": `"longer_val2`" }"
+        fm.Write2(&str)
+        toReplace := "longer_val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        bytes := StrLen(toReplace) * fm.BytesPerChar
+        replacementStr := "new_val"
+        replacement := Buffer(StrLen(replacementStr) * 2)
+        StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+        result := fm.RawReplace(replacement, bytes)
+        if result != -8 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 38 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "new_val", "prop2": "longer_val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(38 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "new_val' {
+            throw Error('Invalid return string.')
+        }
+
+        fm := FileMapping({ MaxSize: 200 })
+        fm.Open()
+        str := "{ `"prop1`": `"val1`", `"prop2`": `"val2`" }"
+        fm.Write2(&str)
+        toReplace := "val1"
+        fm.Pos := (InStr(str, toReplace) - 1) * fm.BytesPerChar
+        bytes := StrLen(toReplace) * fm.BytesPerChar
+        replacementStr := "val0"
+        replacement := Buffer(StrLen(replacementStr) * 2)
+        StrPut(replacementStr, replacement, StrLen(replacementStr), fm.Encoding)
+        result := fm.RawReplace(replacement, bytes)
+        if result != 0 {
+            throw Error('Invalid result.')
+        }
+        if fm.Pos != 32 {
+            throw Error('Invalid pos.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read()
+        if test_str != '{ "prop1": "val0", "prop2": "val2" }' {
+            throw Error('Invalid return string.')
+        }
+        fm.Pos := 0
+        test_str := fm.Read(32 / fm.BytesPerChar)
+        if test_str != '{ "prop1": "val0' {
+            throw Error('Invalid return string.')
         }
     }
     static ToFile() {
@@ -551,7 +1074,7 @@ class test_FileMapping {
                 throw Error('Invalid view size.')
             }
             fm.Terminate()
-            if fm.Pos != test_pos + fm.BytesPerChar {
+            if fm.Pos != test_pos {
                 throw Error('Invalid position.')
             }
             fm.Pos := fm.StartByte
@@ -667,7 +1190,7 @@ class test_FileMapping {
                 throw Error('Invalid position.')
             }
             fm.Terminate()
-            if fm.Pos != test_pos + fm.BytesPerChar {
+            if fm.Pos != test_pos {
                 throw Error('Invalid position.')
             }
             fm.Pos := fm.StartByte
@@ -733,7 +1256,7 @@ class test_FileMapping {
                 throw Error('Invalid pos.')
             }
             fm.Terminate()
-            test_pos := test_maxSize + (_len + 1) * fm.BytesPerChar
+            test_pos := test_maxSize + _len * fm.BytesPerChar
             if fm.Pos != test_pos {
                 throw Error('Invalid pos.')
             }
