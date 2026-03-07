@@ -1,74 +1,29 @@
 ﻿
-/**
- * @class
- * @description - This creates a file mapping object and maps a view of the file.
- *
- * {@link https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw}
- *
- * {@link https://www.autohotkey.com/boards/viewtopic.php?f=96&t=124720}
- *
- * To use a file mapping object for reading from and writing to a file, follow these guidelines:
- * - Set `Options.Path` to the file path.
- * - Set `Options.Encoding` to the file encoding.
- * - You can leave everything else the default.
- *
- * To use a file mapping object for inter-process communication, follow these guidelines:
- * - Leave `Options.Path` unset.
- * - Set `Options.Name` parameter with "Local\" prefix, e.g. "Local\\" to generate a random name.
- * - Set encoding "utf-16".
- * - Set `Options.flProtect := PAGE_READWRITE`.
- * - Set `Options.MaxSize` to any maximum size in bytes.
- * - Set `Options.dwDesiredAccess_file := FILE_MAP_ALL_ACCESS | PAGE_READ_WRITE`.
- * - Set `Options.dwDesiredAccess_view := FILE_MAP_ALL_ACCESS | PAGE_READ_WRITE`.
- */
 class FileMapping {
     static __New() {
         this.DeleteProp('__New')
-        proto := this.Prototype
-        proto.Ptr :=
-        proto.hMapping :=
-        proto.OnExit :=
-        ''
-        proto.Page :=
-        proto.__Pos :=
-        proto.Size :=
-        proto.EnumPageCount :=
-        proto.__OnExitActive :=
-        proto.hFile :=
-        proto.BytesPerChar :=
-        proto.StartByte :=
-        0
         this.Collection := Map()
-    }
-    static __Add(FileMappingObj) {
-        if this.Collection.Has(FileMappingObj.idFileMapping) {
-            throw Error('The collection already has an item with that id.', , FileMappingObj.idFileMapping)
-        } else {
-            this.Collection.Set(FileMappingObj.idFileMapping, FileMappingObj)
-        }
-        ObjRelease(ObjPtr(FileMappingObj))
-    }
-    static _Get(idFileMapping) {
-        return this.Collection.Get(idFileMapping)
-    }
-    static __GetUid() {
-        loop 100 {
-            n := Random(1, 4294967295)
-            if !this.Collection.Has(n) {
-                return n
-            }
-        }
-        throw Error('Failed to produce a unique id.')
+        proto := this.Prototype
+        this.Collection.Default := proto.Ptr := proto.hMapping := proto.OnExit := ''
+        proto.Page := proto.__Pos := proto.Size := proto.EnumPageCount := proto.__OnExitActive :=
+        proto.hFile := proto.BytesPerChar := proto.StartByte := 0
     }
 
     /**
-     * @classdesc -
+     * @description - This creates a file mapping object and maps a view of the file.
+     *
+     * {@link https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw}
+     *
+     * {@link https://www.autohotkey.com/boards/viewtopic.php?f=96&t=124720}
+     *
      * - File object: {@link https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew}
      * - File Mapping object: {@link https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw}
      * - Map view of file: {@link https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile}
      *
      * See Descolada's post for more information
      * {@link https://www.autohotkey.com/boards/viewtopic.php?f=96&t=124720}.
+     *
+     * @class
      *
      * @param {Object|FileMapping.Options} [Options] - Either a {@link FileMapping.Options} object,
      * or an object with zero or more options as property : value pairs.
@@ -164,7 +119,7 @@ class FileMapping {
      * or equal to the size of the file. If `Options.MaxSize` is 0 and if `Options.Path` is used, the
      * maximum size of the file mapping object is equal to the current size of the file. If
      * `Options.MaxSize` is 0 and if `Options.Path` is not used, the libary sets the maximum size to
-     * `FileMapping_VirtualMemoryGranularity` (1 page).
+     * {@link FileMapping_VirtualMemoryGranularity} (1 page).
      *
      * @param {String} [Options.Name] - The name of the file mapping object. Set `Options.Name` when
      * using {@link FileMapping} for inter-process communication.
@@ -238,8 +193,18 @@ class FileMapping {
      * @returns {FileMapping}
      */
     __New(Options?, SkipOptions := false) {
-        this.idFileMapping := FileMapping.__GetUid()
-        FileMapping.__Add(this)
+        loop 100 {
+            id := Random(1, 4294967295)
+            if !FileMapping.Collection.Has(id) {
+                this.idFileMapping := id
+                break
+            }
+        }
+        if !this.HasOwnProp('idFileMapping') {
+            throw Error('Failed to produce a unique id.')
+        }
+        FileMapping.Collection.Set(id, this)
+        ObjRelease(ObjPtr(this))
         if SkipOptions {
             this.Options := Options
         } else {
@@ -1380,7 +1345,7 @@ class FileMapping {
             throw Error('The file has already been opened.')
         }
         if this.Path {
-            if this.hFile := DllCall(
+            this.hFile := DllCall(
                 g_kernel32_CreateFileW
                 , 'Str', this.Path
                 , 'uint', this.dwDesiredAccess_file
@@ -1390,7 +1355,10 @@ class FileMapping {
                 , 'uint', this.dwFlagsAndAttributes
                 , 'ptr', this.hTemplateFile
                 , 'ptr'
-            ) {
+            )
+            if this.hFile = -1 {
+                throw OSError()
+            } else {
                 if !this.MaxSize {
                     if !(this.MaxSize := DllCall(g_kernel32_GetFileSize, 'ptr', this.hFile, 'ptr', 0, 'Int')) {
                         this.CloseFile()
@@ -1401,8 +1369,6 @@ class FileMapping {
                     this.SetOnExitCallback(this.SetOnExit)
                 }
                 return this.hFile
-            } else {
-                throw OSError()
             }
         } else {
             this.hFile := INVALID_HANDLE_VALUE
@@ -3200,8 +3166,8 @@ class FileMapping {
         }
 	}
     __Delete() {
-        this.Close()
         ObjPtrAddRef(this)
+        this.Close()
         if FileMapping.Collection.Has(this.idFileMapping) {
             FileMapping.Collection.Delete(this.idFileMapping)
         } else {
@@ -3210,9 +3176,9 @@ class FileMapping {
         }
     }
     /**
-     * Returns an enumerator. When calling the {@link FileMapping} object in a `for` loop, your code
-     * can include up to four parameters in the loop. The variables receive the following values,
-     * in this order:
+     * @description - Returns an enumerator. When calling the {@link FileMapping} object in a `for`
+     * loop, your code can include up to four parameters in the loop. The variables receive the
+     * following values, in this order:
      * 1. The view's starting page number.
      * 2. The byte offset from the beginning of the file mapping object to the start of the active view.
      * 3. The size of the active view. This will be the same value for all iteration except
@@ -3679,7 +3645,7 @@ class FileMapping {
             }
             return 1
         }
-        FileMapping => FileMapping._Get(this.idFileMapping)
+        FileMapping => FileMapping.Collection.Get(this.idFileMapping)
     }
 }
 
