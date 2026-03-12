@@ -13,22 +13,22 @@ class test_FileMapping {
         this.Encodings := [ 'cp1200', 'cp65001' ]
     }
     static Call() {
-        ; this.path := this.GetPath()
-        ; this.onexit := OnExitCallback(this.path)
-        ; OnExit(this.onexit, 1)
-        ; this.OpenAndReadSmall()
-        ; this.WriteSmall()
-        ; this.WriteAndExpandSmall()
-        ; this.AdjustMaxSizeSmallFile()
-        ; this.GeneralMethods()
-        ; this.LoopReadLarge()
-        ; this.WriteSmall_Pagefile()
-        ; this.WriteLarge_Pagefile()
-        ; this.LoopReadSmall()
-        ; this.ExtendViewOrEndOfMapping()
-        ; this.ToFile()
-        ; this.Insert()
-        ; this.Cut()
+        this.path := this.GetPath()
+        this.onexit := OnExitCallback(this.path)
+        OnExit(this.onexit, 1)
+        this.OpenAndReadSmall()
+        this.WriteSmall()
+        this.WriteAndExpandSmall()
+        this.AdjustMaxSizeSmallFile()
+        this.GeneralMethods()
+        this.LoopReadLarge()
+        this.WriteSmall_Pagefile()
+        this.WriteLarge_Pagefile()
+        this.LoopReadSmall()
+        this.ExtendViewOrEndOfMapping()
+        this.ToFile()
+        this.Insert()
+        this.Cut()
         this.Replace()
     }
     static AdjustMaxSizeSmallFile() {
@@ -112,8 +112,9 @@ class test_FileMapping {
                 s .= '0123456789'
             }
             result := fm.Write2(&s)
-            if result != 500 {
-                throw Error('Expected 500.')
+            expected_result := 250 * fm.BytesPerChar
+            if result != expected_result {
+                throw Error('Invalid result.')
             }
             fm.Pos := 20
             length := 15
@@ -130,7 +131,8 @@ class test_FileMapping {
             if test_len != 235 {
                 throw Error('Invalid strlen.', , test_len)
             }
-            if fm.Pos != 470 {
+            expected_pos := 235 * fm.BytesPerChar
+            if fm.Pos != expected_pos {
                 throw Error('Invalid pos.')
             }
             fm.Close()
@@ -138,15 +140,16 @@ class test_FileMapping {
             fm := FileMapping({ MaxSize: 150, Encoding: encoding })
             fm.Open()
             result := fm.Write('ABC01DEF23GHI45JKL67MNO89PQR01STU23VWX45YZ[67\]^89_')
-            if result != 102 {
+            expected_result := 51 * fm.BytesPerChar
+            if result != expected_result {
                 throw Error('Expected 102.', , result)
             }
-            fm.Pos := 20
+            fm.Pos := 10 * fm.BytesPerChar
             str := fm.CutEx("[789]{2}")
             if str != 'GHI45JKL67MNO89' {
                 throw Error('Expected "GHI45JKL67MNO89".', , str)
             }
-            if fm.Pos != 20 {
+            if fm.Pos != 10 * fm.BytesPerChar {
                 throw Error('Invalid pos.')
             }
             fm.Pos := 0
@@ -154,10 +157,10 @@ class test_FileMapping {
             if str2 != 'ABC01DEF23PQR01STU23VWX45YZ[67\]^89_' {
                 throw Error('Expected "ABC01DEF23PQR01STU23VWX45YZ[67\]^89_".', , str2)
             }
-            if fm.Pos != 72 {
+            if fm.Pos != 36 * fm.BytesPerChar {
                 throw Error('Invalid pos.', , fm.Pos)
             }
-            fm.Pos := 30
+            fm.Pos := 15 * fm.BytesPerChar
             str3 := fm.CutEx("[789]{2}", , , false)
             if str3 != 'STU23VWX45YZ[67\]^' {
                 throw Error('Expected "STU23VWX45YZ[67\]^".', , str3)
@@ -167,7 +170,7 @@ class test_FileMapping {
             if str4 != 'ABC01DEF23PQR0189_' {
                 throw Error('Expected "ABC01DEF23PQR0189_".', , str4)
             }
-            if fm.Pos != 36 {
+            if fm.Pos != 18 * fm.BytesPerChar {
                 throw Error('Invalid pos.')
             }
             fm.Close()
